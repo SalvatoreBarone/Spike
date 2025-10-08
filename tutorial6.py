@@ -16,7 +16,9 @@ import numpy as np
 import itertools
 from torch.utils.data import DataLoader
 
-def get_MNIST(batch_size = 128):
+import os
+
+def get_MNIST():
     data_path='/tmp/data/mnist'
     transform = transforms.Compose([
             transforms.Resize((28, 28)),
@@ -27,26 +29,26 @@ def get_MNIST(batch_size = 128):
     mnist_test = datasets.MNIST(data_path, train=False, download=True, transform=transform)  
     return mnist_train, mnist_test
 
-def forward_pass(net, num_steps, data):
+def forward_pass(snn_model, simulation_steps, samples):
   mem_rec = []
   spk_rec = []
-  utils.reset(net)  # resets hidden states for all LIF neurons in net
-  for step in range(num_steps):
-      spk_out, mem_out = net(data)
+  utils.reset(snn_model)  # resets hidden states for all LIF neurons in net
+  for step in range(simulation_steps):
+      spk_out, mem_out = snn_model(samples)
       spk_rec.append(spk_out)
       mem_rec.append(mem_out)
   return torch.stack(spk_rec), torch.stack(mem_rec)
 
-def batch_accuracy(device, train_loader, net, num_steps):
+def compute_accuracy(device, dataloader, snn_model, simulation_steps):
   with torch.no_grad():
     total = 0
     acc = 0
-    net.eval()
-    train_loader = iter(train_loader)
-    for data, targets in train_loader:
+    snn_model.eval()
+    dataloader = iter(dataloader)
+    for data, targets in dataloader:
       data = data.to(device)
       targets = targets.to(device)
-      spk_rec, _ = forward_pass(net, num_steps, data)
+      spk_rec, _ = forward_pass(snn_model, simulation_steps, data)
       acc += SF.accuracy_rate(spk_rec, targets) * spk_rec.size(1)
       total += spk_rec.size(1)
   return acc/total
@@ -54,82 +56,87 @@ def batch_accuracy(device, train_loader, net, num_steps):
 # Torch Variables
 dtype = torch.float
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+print(f"Device: {device}")
+
+
+## Defining the Network and neuron
+spike_grad = surrogate.fast_sigmoid(slope=25)
+decay_rate = 0.5
+snn_model = nn.Sequential(nn.Conv2d(1, 12, 5),
+                    nn.MaxPool2d(2),
+                    snn.Leaky(beta=decay_rate, spike_grad=spike_grad, init_hidden=True),
+                    nn.Conv2d(12, 64, 5),
+                    nn.MaxPool2d(2),
+                    snn.Leaky(beta=decay_rate, spike_grad=spike_grad, init_hidden=True),
+                    nn.Flatten(),
+                    nn.Linear(64*4*4, 10),
+                    snn.Leaky(beta=decay_rate, spike_grad=spike_grad, init_hidden=True, output=True)
+                    ).to(device)
+
+print(f"Network model:\n{snn_model}")
+
+# SNN time steps
+simulation_steps = 50
+
+filename = "tutorial6.pth"
+
+## Setting up the stati MNIST
+mnist_train, mnist_test = get_MNIST()
 
 # Training Parameters
-batch_size=128
-## Setting up the stati MNIST
-mnist_train, mnist_test = get_MNIST(batch_size)
+batch_size = 128
+num_epochs = 1
+learning_rate = 1e-2
+
 # Create DataLoaders
 train_loader = DataLoader(mnist_train, batch_size=batch_size, shuffle=True, drop_last=True)
 test_loader = DataLoader(mnist_test, batch_size=batch_size, shuffle=True, drop_last=True)
 
-## Defining the Network, neuron and simulation parameters
-spike_grad = surrogate.fast_sigmoid(slope=25)
-beta = 0.5
-num_steps = 50
-net = nn.Sequential(nn.Conv2d(1, 12, 5),
-                    nn.MaxPool2d(2),
-                    snn.Leaky(beta=beta, spike_grad=spike_grad, init_hidden=True),
-                    nn.Conv2d(12, 64, 5),
-                    nn.MaxPool2d(2),
-                    snn.Leaky(beta=beta, spike_grad=spike_grad, init_hidden=True),
-                    nn.Flatten(),
-                    nn.Linear(64*4*4, 10),
-                    snn.Leaky(beta=beta, spike_grad=spike_grad, init_hidden=True, output=True)
-                    ).to(device)
+if not os.path.exists(filename):
+    loss_function = SF.ce_rate_loss()
+    optimizer = torch.optim.Adam(snn_model.parameters(), lr = learning_rate, betas=(0.9, 0.999))
+    loss_history = []
+    test_acc_history = []
+    iteration_counter = 0
+    print(f"Performing the training loop with {num_epochs} epochs.\nBatch size is {batch_size}.\nLearning rate is set to {learning_rate}")
 
+    # Outer training loop
+    for epoch in range(num_epochs):
+        # Training loop
+        for data, targets in iter(train_loader):
+            data = data.to(device)
+            targets = targets.to(device)
+            # forward pass
+            snn_model.train()
+            spk_rec, _ = forward_pass(snn_model, simulation_steps, data)
+            # initialize the loss & sum over time
+            loss_val = loss_function(spk_rec, targets)
+            # Gradient calculation + weight update
+            optimizer.zero_grad()
+            loss_val.backward()
+            optimizer.step()
+            # Store loss history for future plotting
+            loss_history.append(loss_val.item())
+            # Test set
+            if iteration_counter % 50 == 0:
+                with torch.no_grad():
+                    snn_model.eval()
+                    # Test set forward pass
+                    test_acc = compute_accuracy(device, test_loader, snn_model, simulation_steps)
+                    print(f"Iteration {iteration_counter}, Test Acc: {test_acc * 100:.2f}%\n")
+                    test_acc_history.append(test_acc.item())
+            iteration_counter += 1
+    torch.save(snn_model.state_dict(), filename)
+else:
+    print(f"Loading weights from {filename}")
+    snn_model.load_state_dict(torch.load(filename, weights_only=True))
 
-loss_fn = SF.ce_rate_loss()
-optimizer = torch.optim.Adam(net.parameters(), lr=1e-2, betas=(0.9, 0.999))
-num_epochs = 1
-loss_hist = []
-test_acc_hist = []
-counter = 0
-
-# Outer training loop
-for epoch in range(num_epochs):
-    # Training loop
-    for data, targets in iter(train_loader):
-        data = data.to(device)
-        targets = targets.to(device)
-        # forward pass
-        net.train()
-        spk_rec, _ = forward_pass(net, num_steps, data)
-        # initialize the loss & sum over time
-        loss_val = loss_fn(spk_rec, targets)
-        # Gradient calculation + weight update
-        optimizer.zero_grad()
-        loss_val.backward()
-        optimizer.step()
-        # Store loss history for future plotting
-        loss_hist.append(loss_val.item())
-        # Test set
-        if counter % 50 == 0:
-            with torch.no_grad():
-                net.eval()
-
-                # Test set forward pass
-                test_acc = batch_accuracy(device, test_loader, net, num_steps)
-                print(f"Iteration {counter}, Test Acc: {test_acc * 100:.2f}%\n")
-                test_acc_hist.append(test_acc.item())
-        counter += 1
-
-total = 0
-correct = 0
+test_acc = 0
 # drop_last switched to False to keep all samples
 test_loader = DataLoader(mnist_test, batch_size=batch_size, shuffle=True, drop_last=False)
 
 with torch.no_grad():
-  net.eval()
-  for data, targets in test_loader:
-    data = data.to(device)
-    targets = targets.to(device)
-    # forward pass
-    test_spk, _ = net(data.view(data.size(0), -1))
-    # calculate total accuracy
-    _, predicted = test_spk.sum(dim=0).max(1)
-    total += targets.size(0)
-    correct += (predicted == targets).sum().item()
+  snn_model.eval()
+  test_acc = compute_accuracy(device, test_loader, snn_model, simulation_steps)
 
-print(f"Total correctly classified test set images: {correct}/{total}")
-print(f"Test Set Accuracy: {100 * correct / total:.2f}%")
+print(f"Accuracy on test set images: {test_acc*100:.2f}")
