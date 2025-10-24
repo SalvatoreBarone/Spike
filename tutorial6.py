@@ -58,10 +58,10 @@ dtype = torch.float
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
 print(f"Device: {device}")
 
-
 ## Defining the Network and neuron
 spike_grad = surrogate.fast_sigmoid(slope=25)
 decay_rate = 0.5
+
 snn_model = nn.Sequential(nn.Conv2d(1, 12, 5),
                     nn.MaxPool2d(2),
                     snn.Leaky(beta=decay_rate, spike_grad=spike_grad, init_hidden=True),
@@ -77,16 +77,15 @@ print(f"Network model:\n{snn_model}")
 
 # SNN time steps
 simulation_steps = 50
-
-filename = "tutorial6.pth"
-
-## Setting up the stati MNIST
-mnist_train, mnist_test = get_MNIST()
-
 # Training Parameters
 batch_size = 128
 num_epochs = 1
 learning_rate = 1e-2
+# Output file Name
+filename = "tutorial6.pth"
+
+## Setting up the stati MNIST
+mnist_train, mnist_test = get_MNIST()
 
 # Create DataLoaders
 train_loader = DataLoader(mnist_train, batch_size=batch_size, shuffle=True, drop_last=True)
