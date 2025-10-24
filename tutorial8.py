@@ -71,13 +71,13 @@ simulation_steps = 50
 spike_grad = surrogate.fast_sigmoid()
 decay_rate = 0.9  
 
+# Output file Name for learned weights
+filename = "tutorial8.pth"
+
 # Instead of 10 output neurons corresponding to 10 output classes, 
 # we will use 500 output neurons. This means each output class has
 # 50 neurons randomly assigned to it.
 pop_outputs = 500
-
-# Output file Name for learned weights
-filename = "tutorial8.pth"
 
 ## We use a 12C5-MP2-64C5-MP2-1024FC-PopSize
 snn_model = nn.Sequential(nn.Conv2d(1, 12, 5),
