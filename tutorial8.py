@@ -63,7 +63,7 @@ print(f"Device: {device}")
 
 # Training Parameters
 batch_size = 128
-num_epochs = 1
+num_epochs = 5
 learning_rate = 1e-3
 
 # snnTorch Parameters
@@ -111,15 +111,21 @@ test_loader = DataLoader(mnist_test, batch_size=batch_size, shuffle=True, drop_l
 if not os.path.exists(filename):
     print(f"Performing the training loop with {num_epochs} epochs.\nBatch size is {batch_size}.\nLearning rate is set to {learning_rate}")
     # Outer training loop
+    avg_losses = []
     iteration_counter = 0
     for epoch in range(num_epochs):
       avg_loss = backprop.BPTT(snn_model, train_loader, num_steps=simulation_steps,
                           optimizer=optimizer, criterion=loss_function, time_var=False, device=device)
-
-      print(f"Epoch: {epoch}")
-      print(f"Test set accuracy: {compute_accuracy(device, test_loader, snn_model, simulation_steps, population_code=True, num_classes=10)*100:.3f}%\n")
+      avg_losses.append(avg_loss.item())
+      print(f"\n\nEpoch: {epoch}\n\tLoss: {avg_loss:.3f}\n\tTest set accuracy: {compute_accuracy(device, test_loader, snn_model, simulation_steps, population_code=True, num_classes=10)*100:.3f}% ")
+      
 
     torch.save(snn_model.state_dict(), filename)
+    plt.plot(range(len(avg_losses)), avg_losses)
+    plt.xlabel("Epochs")
+    plt.ylabel("Average Loss")
+    plt.title("Average Training Loss vs Epochs")
+    plt.savefig("tutorial8_loss.pdf")
 else:
     print(f"Loading weights from {filename}")
     snn_model.load_state_dict(torch.load(filename, weights_only=True))
