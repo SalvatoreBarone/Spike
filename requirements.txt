@@ -2,3 +2,4 @@ snntorch
 numpy
 matplotlib
 pandas
+tonic
