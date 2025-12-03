@@ -110,9 +110,9 @@ test_loader = DataLoader(mnist_test, batch_size=batch_size, shuffle=True, drop_l
 
 if not os.path.exists(filename):
     print(f"Performing the training loop with {num_epochs} epochs.\nBatch size is {batch_size}.\nLearning rate is set to {learning_rate}")
-    # Outer training loop
     avg_losses = []
-    iteration_counter = 0
+    
+    # Outer training loop
     for epoch in range(num_epochs):
       avg_loss = backprop.BPTT(snn_model, train_loader, num_steps=simulation_steps,
                           optimizer=optimizer, criterion=loss_function, time_var=False, device=device)
