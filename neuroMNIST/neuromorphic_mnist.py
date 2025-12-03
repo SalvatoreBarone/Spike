@@ -11,10 +11,7 @@ from snntorch import functional as SF
 from snntorch import functional as SF
 from snntorch import utils
 
-
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
-
-
 
 def forward_pass(net, data):
     ## Note: we don't specify the simulation time steps as a parameter here.
@@ -23,34 +20,35 @@ def forward_pass(net, data):
     spk_rec = []
     utils.reset(net)  # resets hidden states for all LIF neurons in net
     for step in range(data.size(0)):  # data.size(0) = number of time steps
-        spk_out, mem_out = net(data[step])
+        spk_out, _ = net(data[step])
         spk_rec.append(spk_out)
     return torch.stack(spk_rec)
 
 def train_loop(device, trainloader, net, optimizer, loss_fn, num_epochs, num_iters, filename='train_set_accuracy.pdf'):
     loss_hist = []
     acc_hist = []
-    # training loop
     for epoch in range(num_epochs):
         for i, (data, targets) in enumerate(iter(trainloader)):
             data = data.to(device)
             targets = targets.to(device)
             net.train()
             spk_rec = forward_pass(net, data)
+            
+            print(f"spk_rec.shape: {spk_rec.shape}, targets.shape: {targets.shape}")
+            
             loss_val = loss_fn(spk_rec, targets)
-            # Gradient calculation + weight update
             optimizer.zero_grad()
             loss_val.backward()
             optimizer.step()
-            # Store loss history for future plotting
+
             loss_hist.append(loss_val.item())
             print(f"Epoch {epoch}, Iteration {i} \nTrain Loss: {loss_val.item():.2f}")
             acc = SF.accuracy_rate(spk_rec, targets)
             acc_hist.append(acc)
             print(f"Accuracy: {acc * 100:.2f}%\n")
-            # training loop breaks after N iterations
+
             if i == num_iters:
-                break
+                break  # training loop breaks after N iterations
       
     fig = plt.figure(facecolor="w")
     plt.plot(acc_hist)
@@ -70,7 +68,7 @@ def compute_accuracy(device, dataloader, snn_model):
     for data, targets in dataloader:
       data = data.to(device)
       targets = targets.to(device)
-      spk_rec, _ = forward_pass(snn_model, data)
+      spk_rec = forward_pass(snn_model, data)
       acc += SF.accuracy_rate(spk_rec, targets) * spk_rec.size(1)
       total += spk_rec.size(1)
   return acc/total
@@ -137,6 +135,11 @@ batch_size = 128
 trainloader = DataLoader(cached_trainset, batch_size=batch_size, collate_fn=tonic.collation.PadTensors(), shuffle=True)
 testloader = DataLoader(cached_testset, batch_size=batch_size, collate_fn=tonic.collation.PadTensors())
 
+event_tensor, target = next(iter(trainloader))
+print(event_tensor.shape)
+print(f"train event_tensor.shape: {event_tensor.shape}")
+
+
 """
 The convolutional network architecture to be used is: 12C5-MP2-32C5-MP2-800FC10
 12C5 is a 5x5 convolutional kernel with 12 filters
@@ -172,7 +175,7 @@ model_filename = "neuroMNIST.pth"
 if not os.path.exists(model_filename):
     train_loop(device, trainloader, net, 
                optimizer = torch.optim.Adam(net.parameters(), lr=2e-2, betas=(0.9, 0.999)), 
-               loss_fn = SF.mse_count_loss(correct_rate=0.8, incorrect_rate=0.2), 
+               loss_fn =  SF.ce_rate_loss(), #SF.mse_count_loss(correct_rate=0.8, incorrect_rate=0.2), 
                num_epochs = 1, 
                num_iters = 50)
     torch.save(net.state_dict(), model_filename)
