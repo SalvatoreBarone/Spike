@@ -129,15 +129,15 @@ if __name__ == "__main__":
     
     model_filename = "converted-MNIST.pth"
     if not os.path.exists(model_filename):
-        num_epochs = 1
-        num_iters = 50
+        num_epochs = 10
+        num_iters = 500
         learning_rate = 2e-2
         print(f"Performing the training loop with {num_epochs} epochs.\nBatch size is {batch_size}.\nLearning rate is set to {learning_rate}")
         train_loop(device, train_loader, net, simulation_steps,
                 optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate, betas=(0.9, 0.999)), 
                 loss_fn =  SF.mse_count_loss(correct_rate=0.8, incorrect_rate=0.2), 
-                num_epochs = 1, 
-                num_iters = 50)
+                num_epochs = num_epochs, 
+                num_iters = num_iters)
         torch.save(net.state_dict(), model_filename)
     else:
         print(f"Loading weights from {model_filename}")
