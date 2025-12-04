@@ -26,6 +26,9 @@ def forward_pass(snn_model, simulation_steps, samples):
   spk_rec = []
   utils.reset(snn_model)  # resets hidden states for all LIF neurons in net
   spike_data = spikegen.rate(samples, num_steps=simulation_steps)
+  #print(f"Spike data size: {spike_data.size()}")
+  #exit()
+  # the spike data shape is [time_steps, batch_size, input_size], e.g., ([100, 128, 1, 28, 28])
   for step in range(simulation_steps):
       spk_out, mem_out = snn_model(spike_data[step])
       spk_rec.append(spk_out)
@@ -36,11 +39,11 @@ def train_loop(device, trainloader, net, simulation_steps, optimizer, loss_fn, n
     loss_hist = []
     acc_hist = []
     for epoch in range(num_epochs):
-        for i, (data, targets) in enumerate(iter(trainloader)):
-            data = data.to(device)
+        for i, (samples, targets) in enumerate(iter(trainloader)):
+            samples = samples.to(device)
             targets = targets.to(device)
             net.train()
-            spk_rec, _ = forward_pass(net, simulation_steps, data)
+            spk_rec, _ = forward_pass(net, simulation_steps, samples)
             
             loss_val = loss_fn(spk_rec, targets)
             optimizer.zero_grad()
@@ -93,6 +96,8 @@ if __name__ == "__main__":
     train_loader = DataLoader(mnist_train, batch_size=batch_size, shuffle=True, drop_last=True)
     test_loader = DataLoader(mnist_test, batch_size=batch_size, shuffle=True, drop_last=True)
 
+    data_it, targets_it = next(iter(train_loader))
+    print(f"Spike data shape: {data_it.size()}")
 
     """
     The convolutional network architecture to be used is: 12C5-MP2-32C5-MP2-800FC10
