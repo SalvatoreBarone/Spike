@@ -7,10 +7,42 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from tonic import DiskCachedDataset, MemoryCachedDataset
 from snntorch import surrogate, functional as SF, utils, spikegen
+from tqdm import tqdm
 
 
+class RateEncoding:
+    """This is a custom collate function for a pytorch dataloader to load multiple event recordings
+    at once. It's intended to convert static images to spike encoded images through snnTorch.spikegen.rate
 
-def get_MNIST():
+    Example:
+        >>> dataloader = torch.utils.data.DataLoader(dataset,
+        >>>                                          batch_size=10,
+        >>>                                          collate_fn=RateEncoding(),
+        >>>                                          shuffle=True)
+    """
+    def __init__(self, simulation_steps : int, batch_first: bool = True):
+        self.simulation_steps = simulation_steps
+        self.batch_first = batch_first
+
+    def __call__(self, batch):
+        samples_output = []
+        targets_output = []
+        for sample, target in batch:
+            if not isinstance(sample, torch.Tensor):
+                sample = torch.tensor(sample)
+            if not isinstance(target, torch.Tensor):
+                target = torch.tensor(target)
+            samples_output.append(spikegen.rate(sample, num_steps=simulation_steps))
+            targets_output.append(target)
+        
+        samples_output = torch.stack(samples_output, 0 if self.batch_first else 1)
+        if len(targets_output[0].shape) > 1:
+            targets_output = torch.stack(targets_output, 0 if self.batch_first else -1) 
+        else:
+            targets_output = torch.tensor(targets_output, device=target.device)
+        return (samples_output, targets_output)
+
+def get_MNIST(batch_size, simulation_steps):
     data_path='/tmp/data/mnist'
     transform = transforms.Compose([
             transforms.Resize((28, 28)),
@@ -18,19 +50,23 @@ def get_MNIST():
             transforms.ToTensor(),
             transforms.Normalize((0,), (1,))])
     mnist_train = datasets.MNIST(data_path, train=True, download=True, transform=transform)
-    mnist_test = datasets.MNIST(data_path, train=False, download=True, transform=transform)  
-    return mnist_train, mnist_test
+    mnist_test = datasets.MNIST(data_path, train=False, download=True, transform=transform)
+    # Create DataLoaders
+    # The structure of the input data must be [num_steps x batch_size x (input dimensions)]
+    train_loader = DataLoader(mnist_train, batch_size=batch_size, shuffle=True, drop_last=True, collate_fn=RateEncoding(simulation_steps = simulation_steps, batch_first = False))
+    test_loader = DataLoader(mnist_test, batch_size=batch_size, shuffle=True, drop_last=True, collate_fn=RateEncoding(simulation_steps = simulation_steps, batch_first = False))
+    return train_loader, test_loader
 
 def forward_pass(snn_model, simulation_steps, samples):
   mem_rec = []
   spk_rec = []
   utils.reset(snn_model)  # resets hidden states for all LIF neurons in net
-  spike_data = spikegen.rate(samples, num_steps=simulation_steps)
+  #spike_data = spikegen.rate(samples, num_steps=simulation_steps)
   #print(f"Spike data size: {spike_data.size()}")
   #exit()
   # the spike data shape is [time_steps, batch_size, input_size], e.g., ([100, 128, 1, 28, 28])
   for step in range(simulation_steps):
-      spk_out, mem_out = snn_model(spike_data[step])
+      spk_out, mem_out = snn_model(samples[step])
       spk_rec.append(spk_out)
       mem_rec.append(mem_out)
   return torch.stack(spk_rec), torch.stack(mem_rec)
@@ -87,17 +123,10 @@ if __name__ == "__main__":
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
     print(f"Device: {device}")
 
-    simulation_steps = 100
     ## Setting up the static MNIST
-    mnist_train, mnist_test = get_MNIST()
-
-    # Create DataLoaders
     batch_size = 128
-    train_loader = DataLoader(mnist_train, batch_size=batch_size, shuffle=True, drop_last=True)
-    test_loader = DataLoader(mnist_test, batch_size=batch_size, shuffle=True, drop_last=True)
-
-    data_it, targets_it = next(iter(train_loader))
-    print(f"Spike data shape: {data_it.size()}")
+    simulation_steps = 100
+    train_loader, test_loader = get_MNIST(batch_size, simulation_steps)
 
     """
     The convolutional network architecture to be used is: 12C5-MP2-32C5-MP2-800FC10
