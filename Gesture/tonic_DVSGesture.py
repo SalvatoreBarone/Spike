@@ -11,6 +11,12 @@ from snntorch import functional as SF
 from snntorch import functional as SF
 from snntorch import utils
 
+surrogate_fns = {
+    "atan" : surrogate.atan(),
+    "sigm" : surrogate.sigmoid(),
+    "fsigm" : surrogate.fast_sigmoid(),
+}
+
 
 def get_dataset():
 
@@ -28,24 +34,13 @@ def get_dataset():
         
     We split the dataset into training and test sets, applying the frame transform to bot
     """
-    # data_path='/tmp/data/DVSGesture'
-    # frame_transform = transforms.Compose([
-    #     transforms.Denoise(filter_time=10000),
-    #     transforms.ToFrame(sensor_size=tonic.datasets.DVSGesture.sensor_size, time_window=1000)
-    #     ])
-    # trainset = tonic.datasets.DVSGesture(save_to=data_path, transform=frame_transform, train=True)
-    # testset = tonic.datasets.DVSGesture(save_to=data_path, transform=frame_transform, train=False)
-
-    data_path='/tmp/data/neuro-mnist'
+    data_path='/tmp/data/DVSGesture'
     frame_transform = transforms.Compose([
         transforms.Denoise(filter_time=10000),
-        transforms.ToFrame(sensor_size=tonic.datasets.NMNIST.sensor_size, time_window=1000)
+        transforms.ToFrame(sensor_size=tonic.datasets.DVSGesture.sensor_size, time_window=1000)
         ])
-
-    print(f"Sensor size: {tonic.datasets.NMNIST.sensor_size}")
-
-    trainset = tonic.datasets.NMNIST(save_to=data_path, transform=frame_transform, train=True)
-    testset = tonic.datasets.NMNIST(save_to=data_path, transform=frame_transform, train=False)
+    trainset = tonic.datasets.DVSGesture(save_to=data_path, transform=frame_transform, train=True)
+    testset = tonic.datasets.DVSGesture(save_to=data_path, transform=frame_transform, train=False)
     
     """
     Since the original data is stored in a format that is slow to read, Tonic will convert and cache the transformed data for
@@ -166,7 +161,9 @@ def train(outfile, batchsize, epochs, iterations, learningrate):
     data_it, _ = next(iter(trainloader))
     print(f"Spike data size: {data_it.size()}")
 
-    net = get_net(device, data_it.size()[2], 10)
+    net = get_net(device, data_it.size()[2], 11)
+
+    print(net)
 
     print(f"Performing the training loop with {epochs} epochs.\nBatch size is {batchsize}.\nLearning rate is set to {learningrate}")
     train_loop(device, trainloader, net,
@@ -201,7 +198,9 @@ def test(infile):
     data_it, _ = next(iter(testloader))
     print(f"Spike data size: {data_it.size()}")
 
-    net = get_net(device, data_it.size()[2], 10)
+    net = get_net(device, data_it.size()[2], 11)
+
+    print(net)
 
     print(f"Loading weights from {infile}")
     net.load_state_dict(torch.load(infile, weights_only=True))
