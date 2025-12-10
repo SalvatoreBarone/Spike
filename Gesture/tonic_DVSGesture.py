@@ -18,7 +18,7 @@ surrogate_fns = {
 }
 
 
-def get_dataset():
+def get_dataset(time_window_us):
 
     """
     Let's start by loading the neuromorphic version of the MNIST dataset, called N-MNIST.
@@ -37,7 +37,7 @@ def get_dataset():
     data_path='/tmp/data/DVSGesture'
     frame_transform = transforms.Compose([
         transforms.Denoise(filter_time=10000),
-        transforms.ToFrame(sensor_size=tonic.datasets.DVSGesture.sensor_size, time_window=1000)
+        transforms.ToFrame(sensor_size=tonic.datasets.DVSGesture.sensor_size, time_window=time_window_us)
         ])
     trainset = tonic.datasets.DVSGesture(save_to=data_path, transform=frame_transform, train=True)
     testset = tonic.datasets.DVSGesture(save_to=data_path, transform=frame_transform, train=False)
@@ -134,16 +134,17 @@ def cli():
 
 @cli.command()
 @click.argument('outfile', type=click.Path(exists=False, readable=True, dir_okay=False))
+@click.option('-t', '--time', type=int, default=20000, help='Time window. --time_window=1000 integrates events into 1000us bins. Larger time window allows for smaller tensors.')
 @click.option('-b', '--batchsize', type=int, default=128, help='batch size')
 @click.option('-e','--epochs', type=int, default=1, help='number of training epochs')
 @click.option('-i','--iterations', type=int, default=50, help='number of iterations')
 @click.option('-l','--learningrate', type=float, default=2e-2, help='learning rate')
-def train(outfile, batchsize, epochs, iterations, learningrate):
+def train(outfile, time, batchsize, epochs, iterations, learningrate):
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
     print(f"Device: {device}")
 
     ## Getting the dataset
-    trainset, _ = get_dataset()
+    trainset, _ = get_dataset(time)
     print(f"Training samples: {len(trainset)}")
     print(f"Training data size: {trainset[0][0].shape}")
     """
@@ -175,12 +176,13 @@ def train(outfile, batchsize, epochs, iterations, learningrate):
 
 @cli.command()
 @click.argument('infile', type=click.Path(exists=True, readable=True, dir_okay=False))
-def test(infile):
+@click.option('-t', '--time', type=int, default=20000, help='Time window. --time_window=1000 integrates events into 1000us bins. Larger time window allows for smaller tensors.')
+def test(infile, time):
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
     print(f"Device: {device}")
 
     ## Getting the dataset
-    _, testset = get_dataset()
+    _, testset = get_dataset(time)
     print(f"Testing samples: {len(testset)}")
     print(f"Data size: {testset[0][0].shape}")
     """
