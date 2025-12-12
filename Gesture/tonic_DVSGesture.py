@@ -53,24 +53,25 @@ def get_dataset(time_window_us):
 
 def get_net(device, input_depth, nclasses):
     """
-    The convolutional network architecture to be used is: 12C5-MP2-32C5-MP2-800FC10
-    12C5 is a 5x5 convolutional kernel with 12 filters
-    MP2 is a 2x2 max-pooling function
-    22C5 is a 5x5 convolutional kernel with 32 filters
-    800FC10 is a fully-connected layer that maps 800 neurons to 10 outputs
+    The convolutional network architecture to be used is the one from:
+    K. Stewart, G. Orchard, S. B. Shrestha, e E. Neftci, «Online Few-Shot Gesture Learning on a
+    Neuromorphic Processor», IEEE J. Emerg. Sel. Topics Circuits Syst., vol. 10, fasc. 4, pp. 512–521, 
+    dic. 2020, doi: 10.1109/JETCAS.2020.3032058.
     """
     spike_grad = surrogate.atan()
     decay_rate = 0.5
-    net = nn.Sequential(nn.Conv2d(input_depth, 12, 5),
+    net = nn.Sequential(nn.MaxPool2d(4),  # downsample input size from 128x128 to 32x32
+                        nn.Conv2d(in_channels = input_depth, out_channels = 16, kernel_size = 5, stride = 1, padding=2),
                         nn.MaxPool2d(2),
                         snn.Leaky(beta=decay_rate, spike_grad=spike_grad, init_hidden=True),
-                        nn.Conv2d(12, 32, 5),
+                        nn.Conv2d(in_channels = 16, out_channels = 32, kernel_size = 3, stride = 1, padding=1),
                         nn.MaxPool2d(2),
                         snn.Leaky(beta=decay_rate, spike_grad=spike_grad, init_hidden=True),
                         nn.Flatten(),
-                        nn.Linear(32*5*5, nclasses),
-                        snn.Leaky(beta=decay_rate, spike_grad=spike_grad, init_hidden=True, output=True)
-                        ).to(device)
+                        nn.Linear(in_features = 2048, out_features = 512),
+                        snn.Leaky(beta=decay_rate, spike_grad=spike_grad, init_hidden=True, output=True),
+                        nn.Linear(in_features = 512, out_features = nclasses),
+                        snn.Leaky(beta=decay_rate, spike_grad=spike_grad, init_hidden=True, output=True)).to(device)
     return net
 
 def forward_pass(snn_model, samples):
@@ -146,7 +147,7 @@ def train(outfile, time, batchsize, epochs, iterations, learningrate):
     ## Getting the dataset
     trainset, _ = get_dataset(time)
     print(f"Training samples: {len(trainset)}")
-    print(f"Training data size: {trainset[0][0].shape}")
+
     """
     Because event recordings have different lengths, we are going to provide a collation function
     tonic.collation.PadTensors() that will pad out shorter recordings to ensure all samples in a batch have the same dimensions.
@@ -163,8 +164,6 @@ def train(outfile, time, batchsize, epochs, iterations, learningrate):
     print(f"Spike data size: {data_it.size()}")
 
     net = get_net(device, data_it.size()[2], 11)
-
-    print(net)
 
     print(f"Performing the training loop with {epochs} epochs.\nBatch size is {batchsize}.\nLearning rate is set to {learningrate}")
     train_loop(device, trainloader, net,
@@ -184,7 +183,7 @@ def test(infile, time):
     ## Getting the dataset
     _, testset = get_dataset(time)
     print(f"Testing samples: {len(testset)}")
-    print(f"Data size: {testset[0][0].shape}")
+   
     """
     Because event recordings have different lengths, we are going to provide a collation function
     tonic.collation.PadTensors() that will pad out shorter recordings to ensure all samples in a batch have the same dimensions.
