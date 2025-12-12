@@ -69,7 +69,7 @@ def get_net(device, input_depth, nclasses):
                         snn.Leaky(beta=decay_rate, spike_grad=spike_grad, init_hidden=True),
                         nn.Flatten(),
                         nn.Linear(in_features = 2048, out_features = 512),
-                        snn.Leaky(beta=decay_rate, spike_grad=spike_grad, init_hidden=True, output=True),
+                        snn.Leaky(beta=decay_rate, spike_grad=spike_grad, init_hidden=True),
                         nn.Linear(in_features = 512, out_features = nclasses),
                         snn.Leaky(beta=decay_rate, spike_grad=spike_grad, init_hidden=True, output=True)).to(device)
     return net
