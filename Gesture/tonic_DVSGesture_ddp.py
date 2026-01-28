@@ -168,7 +168,7 @@ class Trainer:
                     f"\tTraining accuracy: {self.train_acc_hist[-1]*100}%.\n"
                     f"\tTest accuracy: {self.test_acc_hist[-1]*100}%\n"
                 )
-            if self.gpu_id == 0 and epoch % self.save_every == 0:
+            if self.gpu_id == 0 and epoch > 1 and epoch % self.save_every == 0:
                 self._save_snapshot(epoch)
         if self.gpu_id == 0:
             self._plot()
