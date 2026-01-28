@@ -8,7 +8,6 @@ from torch.utils.data import DataLoader
 from tonic import MemoryCachedDataset
 from snntorch import surrogate
 from snntorch import functional as SF
-from snntorch import functional as SF
 from snntorch import utils
 
 surrogate_fns = {
