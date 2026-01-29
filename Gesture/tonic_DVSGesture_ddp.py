@@ -2,21 +2,21 @@
 Loading datasets from neuromorphic sensors is made super simple thanks to Tonic, which works much like PyTorch vision.
 """
 
-import sys, click, torch, torchvision, tonic, tonic.transforms as transforms, snntorch, torch.nn as nn, os, matplotlib.pyplot as plt
-from tqdm import tqdm, trange
+import click, torch, tonic, tonic.transforms as transforms, snntorch, torch.nn as nn, os
 from torch.utils.data import DataLoader
+from torchvision.transforms import v2
 
 import torch.multiprocessing as mp
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
-
 from tonic import MemoryCachedDataset
 from snntorch import surrogate
 from snntorch import functional as SF
 from snntorch import utils
 
+from .src.DDPTrainers import SimpleDDPTrainer, ddp_setup
 
 def get_dataset(time_window_us):
     """
@@ -34,7 +34,21 @@ def get_dataset(time_window_us):
     We split the dataset into training and test sets, applying the frame transform to bot
     """
     data_path = "data/"
-    frame_transform = transforms.Compose(
+    train_transform = transforms.Compose(
+        [
+            transforms.Denoise(filter_time=10000),
+            transforms.ToFrame(
+                sensor_size=tonic.datasets.DVSGesture.sensor_size,
+                time_window=time_window_us,
+            ),
+            v2.RandomRotation(10),
+            
+        ]
+    )
+    trainset = tonic.datasets.DVSGesture(
+        save_to=data_path, transform=train_transform, train=True
+    )
+    test_transform = transforms.Compose(
         [
             transforms.Denoise(filter_time=10000),
             transforms.ToFrame(
@@ -43,11 +57,8 @@ def get_dataset(time_window_us):
             ),
         ]
     )
-    trainset = tonic.datasets.DVSGesture(
-        save_to=data_path, transform=frame_transform, train=True
-    )
     testset = tonic.datasets.DVSGesture(
-        save_to=data_path, transform=frame_transform, train=False
+        save_to=data_path, transform=test_transform, train=False
     )
 
     """
@@ -100,134 +111,6 @@ def forward_pass(snn_model, samples):
     return torch.stack(spk_rec), torch.stack(mem_rec)
 
 
-def ddp_setup(rank, world_size):
-    """
-    First, before initializing the group process, call set_device, which sets the default GPU for each process. This is important to prevent hangs or excessive memory utilization on GPU:0
-
-    The process group can be initialized by TCP (default) or from a shared file-system. Read more on process group initialization
-
-    init_process_group initializes the distributed process group.
-
-    Read more about choosing a DDP backend
-
-    Args:
-        rank: Unique identifier of each process
-        world_size: Total number of processes
-    """
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "12355"
-    torch.cuda.set_device(rank)
-    init_process_group(backend="nccl", rank=rank, world_size=world_size)
-
-
-class Trainer:
-    def __init__(
-        self,
-        model: torch.nn.Module,
-        train_data: DataLoader,
-        test_data: DataLoader,
-        loss_fn: snntorch.functional.LossFunctions,
-        acc_fn,
-        optimizer: torch.optim.Optimizer,
-        gpu_id: int,
-        save_every: int,
-        snapshot_path: str = "snapshot.pth",
-    ) -> None:
-        self.model = model.to(gpu_id)
-        self.train_data = train_data
-        self.test_data = test_data
-        self.loss_fn = loss_fn
-        self.acc_fn = acc_fn
-        self.optimizer = optimizer
-        self.gpu_id = gpu_id
-        self.save_every = save_every
-        self.model = DDP(model, device_ids=[gpu_id])
-        self.snapshot_path = snapshot_path
-        self.epochs_run = 0
-        if os.path.exists(self.snapshot_path):
-            self._load_snapshot()
-
-    def load(self, infile):
-        self.model.module.load_state_dict(torch.load(infile, weights_only=True))
-
-    def save(self, outfile):
-        torch.save(self.model.module.state_dict(), outfile)
-
-    def train(self, max_epochs: int, outfile: str):
-        torch.autograd.set_detect_anomaly(True)
-        self.loss_hist = [float("inf")]
-        self.train_acc_hist = [0]
-        self.test_acc_hist = [0]
-        for epoch in range(self.epochs_run, max_epochs):
-            self._run_epoch(epoch)
-            self._test()
-            if self.gpu_id == 0:
-                print(
-                    f"\nEpoch: {epoch}.\n"
-                    f"\tTraining loss: {self.loss_hist[-1]}.\n"
-                    f"\tTraining accuracy: {self.train_acc_hist[-1]*100}%.\n"
-                    f"\tTest accuracy: {self.test_acc_hist[-1]*100}%\n"
-                )
-            if self.gpu_id == 0 and epoch > 1 and epoch % self.save_every == 0:
-                self._save_snapshot(epoch)
-        if self.gpu_id == 0:
-            self._plot()
-        self.save(outfile)
-
-    def _run_epoch(self, epoch):
-        self.train_data.sampler.set_epoch(epoch)
-        for source, targets in self.train_data:
-            source = source.to(self.gpu_id)
-            targets = targets.to(self.gpu_id)
-            self._run_batch(source, targets)
-
-    def _run_batch(self, source, targets):
-        self.model.module.train()
-        self.optimizer.zero_grad()
-        spk_rec, _ = forward_pass(self.model.module, source)
-        loss_val = self.loss_fn(spk_rec, targets)
-        loss_val.backward()
-        self.optimizer.step()
-        self.loss_hist.append(loss_val.item())
-        self.train_acc_hist.append(self.acc_fn(spk_rec, targets))
-
-    def _test(self):
-        with torch.no_grad():
-            total = 0
-            acc = 0
-            self.model.module.eval()
-            for source, targets in iter(self.test_data):
-                source = source.to(self.gpu_id)
-                targets = targets.to(self.gpu_id)
-                spk_rec, _ = forward_pass(self.model, source)
-                acc += SF.accuracy_rate(spk_rec, targets) * spk_rec.size(1)
-                total += spk_rec.size(1)
-        self.test_acc_hist.append(acc / total)
-
-    def _plot(self):
-        plt.figure(facecolor="w")
-        plt.plot(self.train_acc_hist, label="Train Accuracy")
-        plt.plot(self.loss_hist, label="Train Loss")
-        plt.plot(self.test_acc_hist, label="Test  Accuracy")
-        plt.title("Training History")
-        plt.xlabel("Epoch")
-        plt.ylabel("Accuracy")
-        plt.savefig("training_history.pdf")
-
-    def _save_snapshot(self, epoch):
-        snapshot = {}
-        snapshot["MODEL_STATE"] = self.model.module.state_dict()
-        snapshot["EPOCHS_RUN"] = epoch
-        torch.save(snapshot, self.snapshot_path)
-        print(f"Epoch {epoch} | Training snapshot saved at {self.snapshot_path}")
-
-    def _load_snapshot(self):
-        snapshot = torch.load(self.snapshot_path)
-        self.model.module.load_state_dict(snapshot["MODEL_STATE"])
-        self.epochs_run = snapshot["EPOCHS_RUN"]
-        print(f"Resuming training from snapshot at Epoch {self.epochs_run}")
-
-
 @click.group()
 def cli():
     pass
@@ -265,11 +148,12 @@ def training_fn(
     optimizer = torch.optim.Adam(
         model.parameters(), lr=learning_rate, betas=(0.9, 0.999)
     )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, "min", 0.9) 
     loss_fn = SF.mse_count_loss(correct_rate=0.8, incorrect_rate=0.2)
     acc_fn = SF.accuracy_rate
 
-    trainer = Trainer(
-        model, train_loader, test_loader, loss_fn, acc_fn, optimizer, rank, save_every
+    trainer = SimpleDDPTrainer(
+        model, forward_pass, train_loader, test_loader, loss_fn, acc_fn, optimizer, scheduler, rank, save_every
     )
     trainer.train(epochs, outfile)
     destroy_process_group()
