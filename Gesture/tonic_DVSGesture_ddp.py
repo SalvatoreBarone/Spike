@@ -3,6 +3,7 @@ Loading datasets from neuromorphic sensors is made super simple thanks to Tonic,
 """
 
 import click, torch, tonic, tonic.transforms as transforms, snntorch, torch.nn as nn, os
+from distutils.dir_util import mkpath
 from torch.utils.data import DataLoader
 from torchvision.transforms import v2
 
@@ -16,7 +17,7 @@ from snntorch import surrogate
 from snntorch import functional as SF
 from snntorch import utils
 
-from .src.DDPTrainers import SimpleDDPTrainer, ddp_setup
+from src.DDPTrainers import SimpleDDPTrainer, ddp_setup
 
 def get_dataset(time_window_us):
     """
@@ -124,7 +125,7 @@ def training_fn(
     epochs: int,
     learning_rate: float,
     save_every: int,
-    outfile: str,
+    outdir: str,
 ):
     ddp_setup(rank, world_size)
 
@@ -153,14 +154,14 @@ def training_fn(
     acc_fn = SF.accuracy_rate
 
     trainer = SimpleDDPTrainer(
-        model, forward_pass, train_loader, test_loader, loss_fn, acc_fn, optimizer, scheduler, rank, save_every
+        model, forward_pass, train_loader, test_loader, loss_fn, acc_fn, optimizer, scheduler, rank, save_every, outdir
     )
-    trainer.train(epochs, outfile)
+    trainer.train(epochs)
     destroy_process_group()
 
 
 @cli.command()
-@click.argument("outfile", type=click.Path(exists=False, readable=True, dir_okay=False))
+@click.argument("ourdir", type=click.Path(readable=True, writable=True, dir_okay=True, file_okay=False))
 @click.option(
     "-t",
     "--time",
@@ -174,7 +175,13 @@ def training_fn(
 )
 @click.option("-e", "--epochs", type=int, default=1, help="Number of training epochs")
 @click.option("-l", "--learningrate", type=float, default=2e-2, help="learning rate")
-def train(outfile, time, batchsize, checkpoint, epochs, learningrate):
+def train(outdir, time, batchsize, checkpoint, epochs, learningrate):
+    """
+    Train a model using Pytorch Distributed Data Parallel.
+    """
+    
+    mkpath(outdir)
+    
     device = (
         torch.device("cuda")
         if torch.cuda.is_available()
@@ -203,7 +210,7 @@ def train(outfile, time, batchsize, checkpoint, epochs, learningrate):
 
     mp.spawn(
         training_fn,
-        args=(world_size, time, batchsize, epochs, learningrate, checkpoint, outfile),
+        args=(world_size, time, batchsize, epochs, learningrate, checkpoint, outdir),
         nprocs=world_size,
     )
 

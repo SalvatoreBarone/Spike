@@ -31,7 +31,9 @@ class SimpleDDPTrainer:
         scheduler: torch.optim.lr_scheduler.LRScheduler | None,
         gpu_id: int,
         save_every: int,
+        output_dir_path : str,
         snapshot_path: str = "snapshot.pth",
+        model_name : str = "model.pth"
     ) -> None:
         self.model = model.to(gpu_id)
         self.forward_pass_fn = forward_pass_fn
@@ -44,18 +46,20 @@ class SimpleDDPTrainer:
         self.gpu_id = gpu_id
         self.save_every = save_every
         self.model = DDP(model, device_ids=[gpu_id])
-        self.snapshot_path = snapshot_path
+        self.outdir = output_dir_path,
+        self.snapshot_path = f"{output_dir_path}/{snapshot_path}"
+        self.model_path = f"{self.outdir}/{model_name}"
         self.epochs_run = 0
         if os.path.exists(self.snapshot_path):
             self._load_snapshot()
 
-    def load(self, infile):
-        self.model.module.load_state_dict(torch.load(infile, weights_only=True))
+    def load(self):
+        self.model.module.load_state_dict(torch.load(self.model_path, weights_only=True))
 
-    def save(self, outfile):
-        torch.save(self.model.module.state_dict(), outfile)
+    def save(self):
+        torch.save(self.model.module.state_dict(), self.model_path)
 
-    def train(self, max_epochs: int, outfile: str):
+    def train(self, max_epochs: int):
         torch.autograd.set_detect_anomaly(True)
         self.loss_hist = [float("inf")]
         self.train_acc_hist = [0]
@@ -65,16 +69,17 @@ class SimpleDDPTrainer:
             self._test()
             if self.gpu_id == 0:
                 print(
-                    f"\nEpoch: {epoch}.\n"
+                    f"\nEpoch: {epoch}/{max_epochs}.\n"
                     f"\tTraining loss: {self.loss_hist[-1]}.\n"
                     f"\tTraining accuracy: {self.train_acc_hist[-1]*100}%.\n"
-                    f"\tTest accuracy: {self.test_acc_hist[-1]*100}%\n"
+                    f"\tTest accuracy: {self.test_acc_hist[-1]*100}%"
                 )
             if self.gpu_id == 0 and epoch+1 % self.save_every == 0:
                 self._save_snapshot(epoch)
         if self.gpu_id == 0:
             self._plot()
-        self.save(outfile)
+            self.save()
+            os.remove(self.snapshot_path)
 
     def _run_epoch(self, epoch):
         self.train_data.sampler.set_epoch(epoch)
@@ -97,7 +102,8 @@ class SimpleDDPTrainer:
         if self.scheduler is not None:
             # Step the scheduler at the end of each epoch
             self.scheduler.step(loss_val)
-            print(f"Learning Rate: {self.optimizer.param_groups[0]['lr']}")
+            if self.gpu_id == 0:
+                print(f"\tLearning Rate: {self.optimizer.param_groups[0]['lr']}")
         
 
     def _test(self):
@@ -115,19 +121,23 @@ class SimpleDDPTrainer:
 
     def _plot(self):
         fig, ax1 = plt.subplots()
-        
-        ax1.plot(self.loss_hist, label="Train Loss")
-        ax1.set_ylabel("Loss")
-        
         ax2 = ax1.twinx()
-        ax2.plot(self.train_acc_hist, label="Train Accuracy")
-        ax2.plot(self.test_acc_hist, label="Test Accuracy")
+        
+        ln1 = ax1.plot(self.loss_hist, label="Train Loss", color='tab:red')
+        ax1.tick_params(axis='y', labelcolor='tab:red')
+        ax1.set_ylabel("Loss", color='tab:red')
+        
+        ln2 = ax2.plot(self.train_acc_hist, label="Train Accuracy", color='tab:orange')
+        ln3 =ax2.plot(self.test_acc_hist, label="Test Accuracy", color='tab:green')
         ax2.set_ylabel("Accuracy")
         
+        lns = ln1 + ln2 + ln3
+        labs = [l.get_label() for l in lns ]
+        plt.legend(lns, labs)
+        
         plt.xlabel("Epoch")
-        plt.legend()
         plt.title("Training History")
-        plt.savefig("training_history.pdf")
+        plt.savefig(f"{self.outdir}/training_history.pdf")
 
     def _save_snapshot(self, epoch):
         snapshot = {}
