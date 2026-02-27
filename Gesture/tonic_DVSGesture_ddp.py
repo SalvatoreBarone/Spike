@@ -4,22 +4,23 @@ Loading datasets from neuromorphic sensors is made super simple thanks to Tonic,
 
 import click, torch, tonic, tonic.transforms as transforms, snntorch, torch.nn as nn, os
 from distutils.dir_util import mkpath
+
 from torch.utils.data import DataLoader
 from torchvision.transforms import v2
 
 import torch.multiprocessing as mp
 from torch.utils.data.distributed import DistributedSampler
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.distributed import init_process_group, destroy_process_group
+from torch.distributed import destroy_process_group
 
 from tonic import MemoryCachedDataset
+
 from snntorch import surrogate
 from snntorch import functional as SF
-from snntorch import utils
 
 from src.DDPTrainers import SimpleDDPTrainer, ddp_setup
+from src.snn_utilities import forward_pass, compute_accuracy
 
-def get_dataset(time_window_us):
+def get_dataset(filter_time : int = 10000, time_window_us :  int = 20000):
     """
     Let's start by loading the neuromorphic version of the MNIST dataset, called N-MNIST.
 
@@ -37,7 +38,7 @@ def get_dataset(time_window_us):
     data_path = "data/"
     train_transform = transforms.Compose(
         [
-            transforms.Denoise(filter_time=10000),
+            transforms.Denoise(filter_time = filter_time),
             transforms.ToFrame(
                 sensor_size=tonic.datasets.DVSGesture.sensor_size,
                 time_window=time_window_us,
@@ -72,44 +73,31 @@ def get_dataset(time_window_us):
     return MemoryCachedDataset(trainset), MemoryCachedDataset(testset)
 
 
-def get_model(input_depth, nclasses):
+def get_model(input_depth, nclasses, neuron_model : snntorch.SpikingNeuron = snntorch.Leaky, spike_grad : function = surrogate.atan(), decay_rate : float = 0.5):
     """
     The convolutional network architecture to be used is the one from:
     K. Stewart, G. Orchard, S. B. Shrestha, e E. Neftci, «Online Few-Shot Gesture Learning on a
     Neuromorphic Processor», IEEE J. Emerg. Sel. Topics Circuits Syst., vol. 10, fasc. 4, pp. 512–521,
     dic. 2020, doi: 10.1109/JETCAS.2020.3032058.
     """
-    spike_grad = surrogate.atan()
-    decay_rate = 0.5
     return nn.Sequential(
         nn.MaxPool2d(4),  # downsample input size from 128x128 to 32x32
         nn.Conv2d(
             in_channels=input_depth, out_channels=16, kernel_size=5, stride=1, padding=2
         ),
         nn.MaxPool2d(2),
-        snntorch.Leaky(beta=decay_rate, spike_grad=spike_grad, init_hidden=True),
+        neuron_model(beta=decay_rate, spike_grad=spike_grad, init_hidden=True),
         nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1),
         nn.MaxPool2d(2),
-        snntorch.Leaky(beta=decay_rate, spike_grad=spike_grad, init_hidden=True),
+        neuron_model(beta=decay_rate, spike_grad=spike_grad, init_hidden=True),
         nn.Flatten(),
         nn.Linear(in_features=2048, out_features=512),
-        snntorch.Leaky(beta=decay_rate, spike_grad=spike_grad, init_hidden=True),
+        neuron_model(beta=decay_rate, spike_grad=spike_grad, init_hidden=True),
         nn.Linear(in_features=512, out_features=nclasses),
-        snntorch.Leaky(
+        neuron_model(
             beta=decay_rate, spike_grad=spike_grad, init_hidden=True, output=True
         ),
     )
-
-
-def forward_pass(snn_model, samples):
-    mem_rec = []
-    spk_rec = []
-    utils.reset(snn_model)  # resets hidden states for all LIF neurons in net
-    for step in range(samples.size(0)):
-        spk_out, mem_out = snn_model(samples[step])
-        spk_rec.append(spk_out)
-        mem_rec.append(mem_out)
-    return torch.stack(spk_rec), torch.stack(mem_rec)
 
 
 @click.group()
@@ -118,18 +106,31 @@ def cli():
 
 
 def training_fn(
+    # DDP parameters
     rank: int,
     world_size: int,
+    
+    # Dataset parameters
+    filter_time: int,
     time_window: int,
+    
+    # Model parameters
+    
+    # Architecture parameters
+    
+    # Training parameters
+    
     batch_size: int,
     epochs: int,
     learning_rate: float,
+    
+    # Other parameters
     save_every: int,
     outdir: str,
 ):
     ddp_setup(rank, world_size)
 
-    trainset, testset = get_dataset(time_window)
+    trainset, testset = get_dataset(filter_time, time_window)
     train_loader = DataLoader(
         trainset,
         batch_size=batch_size,
@@ -163,6 +164,9 @@ def training_fn(
 @cli.command()
 @click.argument("ourdir", type=click.Path(readable=True, writable=True, dir_okay=True, file_okay=False))
 @click.option(
+    "-f", "--filter_time", type=int, default=10000, help="Denoising filter time in microseconds. Smaller filter_time will filter more events."
+    )
+@click.option(
     "-t",
     "--time",
     type=int,
@@ -175,7 +179,7 @@ def training_fn(
 )
 @click.option("-e", "--epochs", type=int, default=1, help="Number of training epochs")
 @click.option("-l", "--learningrate", type=float, default=2e-2, help="learning rate")
-def train(outdir, time, batchsize, checkpoint, epochs, learningrate):
+def train(outdir, filter_time, time, batchsize, checkpoint, epochs, learningrate):
     """
     Train a model using Pytorch Distributed Data Parallel.
     """
@@ -210,7 +214,7 @@ def train(outdir, time, batchsize, checkpoint, epochs, learningrate):
 
     mp.spawn(
         training_fn,
-        args=(world_size, time, batchsize, epochs, learningrate, checkpoint, outdir),
+        args=(world_size, filter_time, time, batchsize, epochs, learningrate, checkpoint, outdir),
         nprocs=world_size,
     )
 
@@ -225,20 +229,6 @@ def train(outdir, time, batchsize, checkpoint, epochs, learningrate):
     help="Time window. --time_window=1000 integrates events into 1000us bins. Larger time window allows for smaller tensors.",
 )
 def test(infile, time):
-
-    def compute_accuracy(device, dataloader, snn_model):
-        with torch.no_grad():
-            total = 0
-            acc = 0
-            snn_model.eval()
-            dataloader = iter(dataloader)
-            for data, targets in dataloader:
-                data = data.to(device)
-                targets = targets.to(device)
-                spk_rec, _ = forward_pass(snn_model, data)
-                acc += SF.accuracy_rate(spk_rec, targets) * spk_rec.size(1)
-                total += spk_rec.size(1)
-        return acc / total
 
     device = (
         torch.device("cuda")

@@ -22,11 +22,11 @@ class SimpleDDPTrainer:
     def __init__(
         self,
         model: torch.nn.Module,
-        forward_pass_fn,
+        forward_pass_fn : function,
         train_data: torch.utils.data.DataLoader,
         test_data: torch.utils.data.DataLoader,
         loss_fn: snntorch.functional.LossFunctions,
-        acc_fn,
+        acc_fn : snntorch.functional.Accuracy,
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler.LRScheduler | None,
         gpu_id: int,
