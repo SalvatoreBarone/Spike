@@ -1,0 +1,74 @@
+
+import torch, snntorch
+from snntorch import functional as SF, utils, surrogate
+
+def get_neuron_model(neuron_model : snntorch.SpikingNeuron, **kwargs):
+    """
+    Get the neuron model to be used in the architecture. By default, we use Leaky neurons, but you can specify any neuron model from snntorch.
+
+    The parameters for the neuron model can be specified as keyword arguments. For example, if you want to use Leaky neurons with a learnable beta parameter, you can specify learn_beta=True and beta=0.5 (or any other value) as keyword arguments.
+
+    The parameters that can be specified as keyword arguments are:
+        - spike_grad: surrogate gradient function to be used. Defaults to atan.
+        - learn_alpha: Option to enable learnable alpha parameter for leaky neurons. Defaults to False
+        - alpha: initial value for alpha parameter if learn_alpha is False. Defaults to 0.5
+        - learn_beta: Option to enable learnable beta parameter for leaky neurons. Defaults to False
+        - beta: initial value for beta parameter if learn_beta is False. Defaults to 0.5
+        - threshold: initial value for threshold parameter if learn_threshold is False. Defaults to 1.0
+        - learn_threshold: Option to enable learnable threshold parameter for leaky neurons. Defaults to False
+        - reset_mechanism: mechanism for resetting the membrane potential after a spike. Can be "subtract" (default) or "zero".
+        - reset_mechanism determines how the membrane potential is reset after a spike. In reset-by-subtraction, the threshold value is subtracted from the membrane potential :math:`mem` each time the threshold
+        is met. In reset-to-zero, the membrane potential is reset to zero each time the threshold is met. If none, the membrane potential is not reset after a spike. Defaults to "subtract""
+
+    """
+    if neuron_model == snntorch.Leaky:
+        return snntorch.Leaky(
+            beta=kwargs.get("beta", 0.5),
+            threshold=kwargs.get("threshold", 1.0),
+            spike_grad=kwargs.get("spike_grad", surrogate.atan()),
+            learn_beta=kwargs.get("learn_beta", False),
+            learn_threshold=kwargs.get("learn_threshold", False),
+            reset_mechanism=kwargs.get("reset_mechanism", "subtract"),
+            init_hidden=kwargs.get("init_hidden", False),
+            output=kwargs.get("output", False)
+        )
+    elif neuron_model == snntorch.Synaptic:
+        return snntorch.Synaptic(
+            alpha=kwargs.get("alpha", 0.5),
+            beta=kwargs.get("beta", 0.5),
+            threshold=kwargs.get("threshold", 1.0),
+            spike_grad=kwargs.get("spike_grad", surrogate.atan()),
+            learn_alpha=kwargs.get("learn_alpha", False),
+            learn_beta=kwargs.get("learn_beta", False),
+            learn_threshold=kwargs.get("learn_threshold", False),
+            reset_mechanism=kwargs.get("reset_mechanism", "subtract"),
+            init_hidden=kwargs.get("init_hidden", False),
+            output=kwargs.get("output", False)
+        )
+    else:
+        raise NotImplementedError(f"Neuron model {neuron_model} not implemented yet. Please implement the get_neuron_model function for this neuron model.")
+
+
+def forward_pass(snn_model, samples):
+    mem_rec = []
+    spk_rec = []
+    utils.reset(snn_model)  # resets hidden states for all LIF neurons in net
+    for step in range(samples.size(0)):
+        spk_out, mem_out = snn_model(samples[step])
+        spk_rec.append(spk_out)
+        mem_rec.append(mem_out)
+    return torch.stack(spk_rec), torch.stack(mem_rec)
+
+def compute_accuracy(device, dataloader, snn_model):
+    with torch.no_grad():
+        total = 0
+        acc = 0
+        snn_model.eval()
+        dataloader = iter(dataloader)
+        for data, targets in dataloader:
+            data = data.to(device)
+            targets = targets.to(device)
+            spk_rec, _ = forward_pass(snn_model, data)
+            acc += SF.accuracy_rate(spk_rec, targets) * spk_rec.size(1)
+            total += spk_rec.size(1)
+    return acc / total

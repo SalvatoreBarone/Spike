@@ -22,16 +22,16 @@ class SimpleDDPTrainer:
     def __init__(
         self,
         model: torch.nn.Module,
-        forward_pass_fn : function,
+        forward_pass_fn : callable,
         train_data: torch.utils.data.DataLoader,
         test_data: torch.utils.data.DataLoader,
-        loss_fn: snntorch.functional.LossFunctions,
-        acc_fn : snntorch.functional.Accuracy,
+        loss_fn: snntorch.functional.loss.LossFunctions,
+        acc_fn : callable,
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler.LRScheduler | None,
         gpu_id: int,
         save_every: int,
-        output_dir_path : str,
+        workdir : str,
         snapshot_path: str = "snapshot.pth",
         model_name : str = "model.pth"
     ) -> None:
@@ -46,9 +46,9 @@ class SimpleDDPTrainer:
         self.gpu_id = gpu_id
         self.save_every = save_every
         self.model = DDP(model, device_ids=[gpu_id])
-        self.outdir = output_dir_path,
-        self.snapshot_path = f"{output_dir_path}/{snapshot_path}"
-        self.model_path = f"{self.outdir}/{model_name}"
+        self.workdir = workdir
+        self.snapshot_path = f"{self.workdir}/{snapshot_path}"
+        self.model_path = f"{self.workdir}/{model_name}"
         self.epochs_run = 0
         if os.path.exists(self.snapshot_path):
             self._load_snapshot()
@@ -102,9 +102,6 @@ class SimpleDDPTrainer:
         if self.scheduler is not None:
             # Step the scheduler at the end of each epoch
             self.scheduler.step(loss_val)
-            if self.gpu_id == 0:
-                print(f"\tLearning Rate: {self.optimizer.param_groups[0]['lr']}")
-        
 
     def _test(self):
         with torch.no_grad():
@@ -137,7 +134,7 @@ class SimpleDDPTrainer:
         
         plt.xlabel("Epoch")
         plt.title("Training History")
-        plt.savefig(f"{self.outdir}/training_history.pdf")
+        plt.savefig(f"{self.workdir}/training_history.pdf")
 
     def _save_snapshot(self, epoch):
         snapshot = {}
