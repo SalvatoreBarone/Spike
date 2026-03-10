@@ -115,6 +115,8 @@ def train(outdir, filter_time, time, batchsize, checkpoint, epochs, learningrate
         args=(world_size, filter_time, time, batchsize, epochs, learningrate, checkpoint, outdir),
         nprocs=world_size,
     )
+    
+    
 
 
 @cli.command()

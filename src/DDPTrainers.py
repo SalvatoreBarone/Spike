@@ -79,6 +79,7 @@ class SimpleDDPTrainer:
         if self.gpu_id == 0:
             self._plot()
             self.save()
+        if os.path.exists(self.snapshot_path):
             os.remove(self.snapshot_path)
 
     def _run_epoch(self, epoch):
@@ -99,8 +100,9 @@ class SimpleDDPTrainer:
         
         self.loss_hist.append(loss_val.item())
         self.train_acc_hist.append(self.acc_fn(spk_rec, targets))
+        
+        # Step the scheduler at the end of each epoch
         if self.scheduler is not None:
-            # Step the scheduler at the end of each epoch
             self.scheduler.step(loss_val)
 
     def _test(self):
