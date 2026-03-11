@@ -118,6 +118,7 @@ def train(outdir, filter_time, time, batchsize, checkpoint, epochs, learningrate
                 "learning_rate" : learningrate
               }),
         nprocs = world_size,
+        join = True
     )
     
     
