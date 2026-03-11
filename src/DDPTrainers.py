@@ -92,18 +92,20 @@ class SimpleDDPTrainer:
 
     def _run_batch(self, source, targets):
         self.model.module.train()
-        self.optimizer.zero_grad()
+        # propagating one batch through the network and evaluating loss
         spk_rec, _ = self.forward_pass_fn(self.model.module, source)
         loss_val = self.loss_fn(spk_rec, targets)
+         # Gradient calculation + weight update
+        self.optimizer.zero_grad()
         loss_val.backward()
         self.optimizer.step()
-        
+        # Store loss history for future plotting
         self.loss_hist.append(loss_val.item())
         self.train_acc_hist.append(self.acc_fn(spk_rec, targets))
-        
         # Step the scheduler at the end of each epoch
         if self.scheduler is not None:
             self.scheduler.step(loss_val)
+
 
     def _test(self):
         with torch.no_grad():
@@ -119,22 +121,22 @@ class SimpleDDPTrainer:
         self.test_acc_hist.append(acc / total)
 
     def _plot(self):
-        fig, ax1 = plt.subplots()
-        ax2 = ax1.twinx()
-        
-        ln1 = ax1.plot(self.loss_hist, label="Train Loss", color='tab:red')
-        ax1.tick_params(axis='y', labelcolor='tab:red')
-        ax1.set_ylabel("Loss", color='tab:red')
-        
-        ln2 = ax2.plot(self.train_acc_hist, label="Train Accuracy", color='tab:orange')
-        ln3 =ax2.plot(self.test_acc_hist, label="Test Accuracy", color='tab:green')
-        ax2.set_ylabel("Accuracy")
-        
-        lns = ln1 + ln2 + ln3
-        labs = [l.get_label() for l in lns ]
-        plt.legend(lns, labs)
-        
-        plt.xlabel("Epoch")
+        fig, axes = plt.subplots(1, 3, figsize=(18,4))
+        # Plot Train Accuracy
+        axes[0].plot(self.train_acc_hist)
+        axes[0].set_title("Train Set Accuracy")
+        axes[0].set_xlabel("Iteration")
+        axes[0].set_ylabel("Accuracy")
+        # Plot Test Accuracy
+        axes[1].plot(self.test_acc_hist)
+        axes[1].set_title("Test Set Accuracy")
+        axes[1].set_xlabel("Epoch")
+        axes[1].set_ylabel("Accuracy")
+        # Plot Training Loss
+        axes[2].plot(self.loss_hist)
+        axes[2].set_title("Loss History")
+        axes[2].set_xlabel("Iteration")
+        axes[2].set_ylabel("Loss")
         plt.title("Training History")
         plt.savefig(f"{self.workdir}/training_history.pdf")
 

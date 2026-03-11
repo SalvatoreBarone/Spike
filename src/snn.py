@@ -49,26 +49,28 @@ def get_neuron_model(neuron_model : snntorch.SpikingNeuron, **kwargs):
         raise NotImplementedError(f"Neuron model {neuron_model} not implemented yet. Please implement the get_neuron_model function for this neuron model.")
 
 
-def forward_pass(snn_model, samples):
+def forward_pass(snn_model: torch.nn.Module, samples: torch.Tensor):
     mem_rec = []
     spk_rec = []
     utils.reset(snn_model)  # resets hidden states for all LIF neurons in net
-    for step in range(samples.size(0)):
+    for step in range(samples.size(0)):  # data.size(0) = number of time steps
         spk_out, mem_out = snn_model(samples[step])
         spk_rec.append(spk_out)
         mem_rec.append(mem_out)
     return torch.stack(spk_rec), torch.stack(mem_rec)
 
-def compute_accuracy(device, dataloader, snn_model):
+def compute_accuracy(
+    device, dataloader : torch.utils.data.DataLoader,
+    snn_model: torch.nn.Module,
+    forward_pass_fn : callable = forward_pass,
+    acc_fn : callable = SF.accuracy_rate):
     with torch.no_grad():
-        total = 0
-        acc = 0
+        total, correct = 0, 0
         snn_model.eval()
         dataloader = iter(dataloader)
         for data, targets in dataloader:
-            data = data.to(device)
-            targets = targets.to(device)
-            spk_rec, _ = forward_pass(snn_model, data)
-            acc += SF.accuracy_rate(spk_rec, targets) * spk_rec.size(1)
+            data, targets = data.to(device), targets.to(device)
+            spk_rec, _ = forward_pass_fn(snn_model, data)
+            correct += acc_fn(spk_rec, targets) * spk_rec.size(1)
             total += spk_rec.size(1)
-    return acc / total
+    return correct / total

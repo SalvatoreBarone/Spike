@@ -20,33 +20,31 @@ def training_fn(
     rank: int,
     world_size: int,
     
-    # Dataset parameters
-    filter_time: int,
-    time_window: int,
-    
-    # Model parameters
-    
-    # Architecture parameters
-    
-    # Training parameters
-    
-    batch_size: int,
-    epochs: int,
-    learning_rate: float,
-    
     # Other parameters
-    save_every: int,
     outdir: str,
+    save_every: int,
+    
+    ## Additional keyword arguments for neuron model
+    kwargs
 ):
     ddp_setup(rank, world_size)
 
-    dataset = DVSGesture(batch_size, filter_time, time_window)
-    cnn = CNN(dataset.ishape[2], dataset.nclasses, neuron_model = snntorch.Leaky, beta = 0.9, spike_grad = snntorch.surrogate.atan())
+    dataset = DVSGesture(
+        batch_size = kwargs.get("batch_size", 128),
+        filter_time = kwargs.get("filter_time", 10000),
+        time_window_us = kwargs.get("time_window", 20000)
+    )
     
+    cnn = CNN(
+        dataset.ishape[2],
+        dataset.nclasses,
+        kwargs.get("neuron_model", snntorch.Leaky), 
+        kwargs = kwargs)
     
-
     optimizer = torch.optim.Adam(
-        cnn.model.parameters(), lr = learning_rate, betas=(0.9, 0.999)
+        cnn.model.parameters(),
+        lr = kwargs.get("learning_rate", 2e-2),
+        betas=(0.9, 0.999)
     )
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, "min", 0.9) 
     loss_fn = SF.mse_count_loss(correct_rate=0.8, incorrect_rate=0.2)
@@ -55,7 +53,7 @@ def training_fn(
     trainer = SimpleDDPTrainer(
         cnn.model, forward_pass, dataset.train_loader, dataset.test_loader, loss_fn, acc_fn, optimizer, scheduler, rank, save_every, outdir
     )
-    trainer.train(epochs)
+    trainer.train(kwargs.get("epochs", 1))
     destroy_process_group()
 
 
@@ -112,8 +110,14 @@ def train(outdir, filter_time, time, batchsize, checkpoint, epochs, learningrate
 
     mp.spawn(
         training_fn,
-        args=(world_size, filter_time, time, batchsize, epochs, learningrate, checkpoint, outdir),
-        nprocs=world_size,
+        args=(world_size, outdir, checkpoint,
+              { 
+                "filter_time"   : filter_time,
+                "time_window"   : time, 
+                "batch_size"    : batchsize, 
+                "learning_rate" : learningrate
+              }),
+        nprocs = world_size,
     )
     
     

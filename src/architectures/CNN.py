@@ -9,11 +9,11 @@ class Network(GenericSNN):
     Neuromorphic Processor», IEEE J. Emerg. Sel. Topics Circuits Syst., vol. 10, fasc. 4, pp. 512–521,
     dic. 2020, doi: 10.1109/JETCAS.2020.3032058.
     """
-    def __init__(self, input_depth, noutputs, neuron_model, **kwargs):
+    def __init__(self, input_depth : int, noutputs : int, neuron_model : snntorch.SpikingNeuron, **kwargs):
         super().__init__()
         self.model = self._get_model(input_depth, noutputs, neuron_model, **kwargs)
         
-    def _get_model(self, input_depth, noutputs, neuron_model, **kwargs):
+    def _get_model(self, input_depth : int, noutputs : int, neuron_model : snntorch.SpikingNeuron, **kwargs):
         return nn.Sequential(
             nn.MaxPool2d(4),  # downsample input size from 128x128 to 32x32
             nn.Conv2d(
