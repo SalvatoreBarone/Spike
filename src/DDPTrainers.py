@@ -55,9 +55,11 @@ class SimpleDDPTrainer:
 
     def load(self):
         self.model.module.load_state_dict(torch.load(self.model_path, weights_only=True))
+        print(f"Model loaded from {self.model_path}")
 
     def save(self):
         torch.save(self.model.module.state_dict(), self.model_path)
+        print(f"Final model saved at {self.model_path}")
 
     def train(self, max_epochs: int):
         torch.autograd.set_detect_anomaly(True)
@@ -69,7 +71,7 @@ class SimpleDDPTrainer:
             self._test()
             if self.gpu_id == 0:
                 print(
-                    f"\nEpoch: {epoch}/{max_epochs}.\n"
+                    f"\nEpoch: {epoch+1}/{max_epochs}.\n"
                     f"\tTraining loss: {self.loss_hist[-1]}.\n"
                     f"\tTraining accuracy: {self.train_acc_hist[-1]*100}%.\n"
                     f"\tTest accuracy: {self.test_acc_hist[-1]*100}%"
@@ -151,4 +153,4 @@ class SimpleDDPTrainer:
         snapshot = torch.load(self.snapshot_path)
         self.model.module.load_state_dict(snapshot["MODEL_STATE"])
         self.epochs_run = snapshot["EPOCHS_RUN"]
-        print(f"Resuming training from snapshot at Epoch {self.epochs_run}")
+        print(f"Resuming training from snapshot {self.snapshot_path} at Epoch {self.epochs_run}")
