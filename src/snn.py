@@ -23,14 +23,14 @@ def get_neuron_model(neuron_model : snntorch.SpikingNeuron, **kwargs):
     """
     if neuron_model == snntorch.Leaky:
         return snntorch.Leaky(
-            beta=kwargs.get("beta", 0.5),
-            threshold=kwargs.get("threshold", 1.0),
-            spike_grad=kwargs.get("spike_grad", surrogate.atan()),
-            learn_beta=kwargs.get("learn_beta", False),
-            learn_threshold=kwargs.get("learn_threshold", False),
-            reset_mechanism=kwargs.get("reset_mechanism", "subtract"),
-            init_hidden=kwargs.get("init_hidden", False),
-            output=kwargs.get("output", False)
+            beta = kwargs.get("beta", 0.5),
+            threshold = kwargs.get("threshold", 1.0),
+            spike_grad = kwargs.get("spike_grad", surrogate.atan()),
+            learn_beta = kwargs.get("learn_beta", False),
+            learn_threshold = kwargs.get("learn_threshold", False),
+            reset_mechanism = kwargs.get("reset_mechanism", "subtract"),
+            init_hidden = kwargs.get("init_hidden", False),
+            output = kwargs.get("output", False)
         )
     elif neuron_model == snntorch.Synaptic:
         return snntorch.Synaptic(

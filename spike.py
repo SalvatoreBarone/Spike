@@ -7,8 +7,8 @@ from torch.distributed import destroy_process_group
 
 from src.snn import forward_pass, compute_accuracy
 from src.DDPTrainers import SimpleDDPTrainer, ddp_setup
-from src.datasets.DVSGesture import DVSGesture
-from src.architectures.CNN import Network as CNN
+from src.datasets.DVSGesture import DVSGestureTimeWindow, DVSGestureTimeBins
+from src.architectures.CNN import MP4_16C5_MP2_32C3_MP2_2048FC512_512FCnclasses as CNN
 
 @click.group()
 def cli():
@@ -29,17 +29,30 @@ def training_fn(
 ):
     ddp_setup(rank, world_size)
 
-    dataset = DVSGesture(
-        batch_size = kwargs.get("batch_size", 128),
+    dataset = DVSGestureTimeWindow(
+        batch_size = kwargs.get("batch_size", 64),
         filter_time = kwargs.get("filter_time", 10000),
         time_window_us = kwargs.get("time_window", 20000)
     )
+    
+    # dataset = DVSGestureTimeBins(
+    #     batch_size = kwargs.get("batch_size", 64),
+    #     filter_time = kwargs.get("filter_time", 10000),
+    #     n_time_bins = kwargs.get("n_time_bins", 32),
+    #     rank=rank
+    # )
+    
+    if (rank == 0):
+        print(f"Dataset {dataset.__class__.__name__} loaded. Input shape: {dataset.ishape}, number of classes: {dataset.nclasses}")
     
     cnn = CNN(
         dataset.ishape[2],
         dataset.nclasses,
         kwargs.get("neuron_model", snntorch.Leaky), 
         kwargs = kwargs)
+    
+    if (rank == 0):
+        print(f"Model architecture:\n{cnn.model}")
     
     optimizer = torch.optim.Adam(
         cnn.model.parameters(),
@@ -91,6 +104,7 @@ def train(outdir, filter_time, time, batchsize, checkpoint, epochs, learningrate
             else torch.device("cpu")
         )
     )
+    
     print(f"Device: {device}")
     if torch.cuda.is_available():
         world_size = torch.cuda.device_count()
@@ -114,6 +128,7 @@ def train(outdir, filter_time, time, batchsize, checkpoint, epochs, learningrate
               { 
                 "filter_time"   : filter_time,
                 "time_window"   : time, 
+                "epochs"        : epochs,
                 "batch_size"    : batchsize, 
                 "learning_rate" : learningrate
               }),
@@ -151,8 +166,8 @@ def test(infile, filter_time, time):
     print(f"Device: {device}")
 
     ## Getting the dataset
-    dataset = DVSGesture(32, filter_time, time)
-    cnn = CNN(dataset.ishape[2], dataset.nclasses, neuron_model = snntorch.Leaky, beta = 0.9, spike_grad = snntorch.surrogate.atan())
+    dataset = DVSGestureTimeWindow(32, filter_time, time)
+    cnn = CNN(dataset.ishape[2], dataset.nclasses)
     cnn.model.to(device)
 
     print(cnn.model)
