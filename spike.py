@@ -29,21 +29,22 @@ def training_fn(
 ):
     ddp_setup(rank, world_size)
 
-    dataset = DVSGestureTimeWindow(
-        batch_size = kwargs.get("batch_size", 64),
-        filter_time = kwargs.get("filter_time", 10000),
-        time_window_us = kwargs.get("time_window", 20000)
-    )
-    
-    # dataset = DVSGestureTimeBins(
+    # dataset = DVSGestureTimeWindow(
     #     batch_size = kwargs.get("batch_size", 64),
     #     filter_time = kwargs.get("filter_time", 10000),
-    #     n_time_bins = kwargs.get("n_time_bins", 32),
-    #     rank=rank
+    #     time_window_us = kwargs.get("time_window", 20000)
     # )
+    
+    dataset = DVSGestureTimeBins(
+        batch_size = kwargs.get("batch_size", 64),
+        filter_time = kwargs.get("filter_time", 10000),
+        n_time_bins = kwargs.get("n_time_bins", 32),
+        rank=rank
+    )
     
     if (rank == 0):
         print(f"Dataset {dataset.__class__.__name__} loaded. Input shape: {dataset.ishape}, number of classes: {dataset.nclasses}")
+        print(f"kwargs: {kwargs}")
     
     cnn = CNN(
         dataset.ishape[2],
@@ -82,13 +83,16 @@ def training_fn(
     default=20000,
     help="Time window. --time_window=1000 integrates events into 1000us bins. Larger time window allows for smaller tensors.",
 )
+@click.option("-d", "--learnbeta", is_flag=True, default=False, help="Use learned decay parameters for the neuron model.")
+@click.option("-z", "--resetzero", is_flag=True, default=False, help="Use reset-to-zero mechanism for the neuron model instead of reset-by-subtraction.")
+@click.option("-v", "--learnthreshold", is_flag=True, default=False, help="Use learned threshold parameters for the neuron model.")
 @click.option("-b", "--batchsize", type=int, default=128, help="batch size")
 @click.option(
     "-c", "--checkpoint", type=int, default=5, help="Checkpoint every N epochs"
 )
 @click.option("-e", "--epochs", type=int, default=1, help="Number of training epochs")
 @click.option("-l", "--learningrate", type=float, default=2e-2, help="learning rate")
-def train(outdir, filter_time, time, batchsize, checkpoint, epochs, learningrate):
+def train(outdir, filter_time, time, learnbeta, resetzero, learnthreshold, batchsize, checkpoint, epochs, learningrate):
     """
     Train a model using Pytorch Distributed Data Parallel.
     """
@@ -126,11 +130,15 @@ def train(outdir, filter_time, time, batchsize, checkpoint, epochs, learningrate
         training_fn,
         args=(world_size, outdir, checkpoint,
               { 
-                "filter_time"   : filter_time,
-                "time_window"   : time, 
-                "epochs"        : epochs,
-                "batch_size"    : batchsize, 
-                "learning_rate" : learningrate
+                "filter_time"     : filter_time,
+                "time_window"     : time, 
+                "n_time_bins"     : time,
+                "learn_beta"      : learnbeta,
+                "learn_threshold" : learnthreshold,
+                "reset_mechanism" : "zero" if resetzero else "subtract",
+                "epochs"          : epochs,
+                "batch_size"      : batchsize, 
+                "learning_rate"   : learningrate
               }),
         nprocs = world_size,
         join = True

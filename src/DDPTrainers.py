@@ -1,4 +1,5 @@
 import torch, snntorch, os, matplotlib.pyplot as plt
+from tqdm import tqdm, trange
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group
 
@@ -66,11 +67,20 @@ class SimpleDDPTrainer:
         self.loss_hist = [float("inf")]
         self.train_acc_hist = [0]
         self.test_acc_hist = [0]
+        
+        if self.gpu_id == 0:
+            pbar = tqdm(total=max_epochs, desc = "Training: ", leave = False, bar_format="{desc:30} {percentage:3.0f}% |{bar:40}{r_bar}{bar:-10b}")
+            if self.epochs_run > 0:
+                print(f"Resuming training from snapshot at Epoch {self.epochs_run}.")
+                pbar.update(self.epochs_run)
+            
         for epoch in range(self.epochs_run, max_epochs):
             self._run_epoch(epoch)
             self._test()
+            
             if self.gpu_id == 0:
-                print(
+                pbar.update(1)
+                tqdm.write(
                     f"\nEpoch: {epoch+1}/{max_epochs}.\n"
                     f"\tTraining loss: {self.loss_hist[-1]:.4f}.\n"
                     f"\tTraining accuracy: {self.train_acc_hist[-1]*100:.2f}%.\n"
@@ -78,6 +88,7 @@ class SimpleDDPTrainer:
                 )
             if self.gpu_id == 0 and epoch+1 % self.save_every == 0:
                 self._save_snapshot(epoch)
+                
         if self.gpu_id == 0:
             self._plot()
             self.save()
@@ -86,10 +97,17 @@ class SimpleDDPTrainer:
 
     def _run_epoch(self, epoch):
         self.train_data.sampler.set_epoch(epoch)
+        
+        if self.gpu_id == 0:
+            pbar = tqdm(total = len(self.train_data), desc = f"Epoch {epoch+1} batches: ", leave = False, bar_format="{desc:30} {percentage:3.0f}% |{bar:40}{r_bar}{bar:-10b}")
+            
         for source, targets in self.train_data:
             source = source.to(self.gpu_id)
             targets = targets.to(self.gpu_id)
             self._run_batch(source, targets)
+            
+            if self.gpu_id == 0:
+                pbar.update(1)
             
 
     def _run_batch(self, source, targets):
