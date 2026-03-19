@@ -122,9 +122,13 @@ class SimpleDDPTrainer:
         # Store loss history for future plotting
         self.loss_hist.append(loss_val.item())
         self.train_acc_hist.append(self.acc_fn(spk_rec, targets))
+        
         # Step the scheduler at the end of each epoch
         if self.scheduler is not None:
             self.scheduler.step(loss_val)
+            if self.gpu_id == 0:
+                tqdm.write(f"\tLearning rate: {self.optimizer.param_groups[0]['lr']:.6f}")
+            
 
 
     def _test(self):

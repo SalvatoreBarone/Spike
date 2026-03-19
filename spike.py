@@ -1,20 +1,40 @@
 #!python
-import click, torch, tonic, snntorch, torch.multiprocessing as mp
+import click, torch, tonic, snntorch, torch.multiprocessing as mp, warnings, json
+warnings.filterwarnings("ignore")
+
 from snntorch import functional as SF
 from distutils.dir_util import mkpath
-
 from torch.distributed import destroy_process_group
-
 from src.snn import forward_pass, compute_accuracy
 from src.DDPTrainers import SimpleDDPTrainer, ddp_setup
 from src.datasets.DVSGesture import DVSGestureTimeWindow, DVSGestureTimeBins
 from src.architectures.CNN import MP4_16C5_MP2_32C3_MP2_2048FC512_512FCnclasses as CNN
 
-@click.group()
-def cli():
-    pass
 
-
+def get_gpu_count():
+    device = (
+        torch.device("cuda")
+        if torch.cuda.is_available()
+        else (
+            torch.device("mps")
+            if torch.backends.mps.is_available()
+            else torch.device("cpu")
+        )
+    )
+    
+    print(f"Device: {device}")
+    if torch.cuda.is_available():
+        world_size = torch.cuda.device_count()
+        print(f"Available CUDA devices: {world_size}")
+        for i in range(torch.cuda.device_count()):
+            print(
+                f"{torch.cuda.get_device_properties(i).name}."
+                f" Total memory: {torch.cuda.get_device_properties(i).total_memory//2**20} MB."
+                f" Capabilities: {torch.cuda.get_device_properties(i).major}.{torch.cuda.get_device_properties(i).minor}"
+            )
+            
+    return world_size
+    
 def training_fn(
     # DDP parameters
     rank: int,
@@ -36,15 +56,15 @@ def training_fn(
     # )
     
     dataset = DVSGestureTimeBins(
-        batch_size = kwargs.get("batch_size", 64),
-        filter_time = kwargs.get("filter_time", 10000),
+        batch_size = kwargs.get("batch_size", 32),
+        filter_time = kwargs.get("filter_time", 5000),
         n_time_bins = kwargs.get("n_time_bins", 32),
         rank=rank
     )
     
     if (rank == 0):
         print(f"Dataset {dataset.__class__.__name__} loaded. Input shape: {dataset.ishape}, number of classes: {dataset.nclasses}")
-        print(f"kwargs: {kwargs}")
+        print(f"kwargs: {json.dumps(kwargs, indent=4)}")
     
     cnn = CNN(
         dataset.ishape[2],
@@ -70,6 +90,10 @@ def training_fn(
     trainer.train(kwargs.get("epochs", 1))
     destroy_process_group()
 
+
+@click.group()
+def cli():
+    pass
 
 @cli.command()
 @click.argument("outdir", type=click.Path(readable=True, writable=True, dir_okay=True, file_okay=False))
@@ -97,54 +121,30 @@ def train(outdir, filter_time, time, learnbeta, resetzero, learnthreshold, batch
     Train a model using Pytorch Distributed Data Parallel.
     """
     
+    
     mkpath(outdir)
     
-    device = (
-        torch.device("cuda")
-        if torch.cuda.is_available()
-        else (
-            torch.device("mps")
-            if torch.backends.mps.is_available()
-            else torch.device("cpu")
-        )
-    )
+    gpu_count = get_gpu_count()
+   
+    kwargs = { 
+        "filter_time"     : filter_time,
+        "time_window"     : time, 
+        "n_time_bins"     : time,
+        "learn_beta"      : learnbeta,
+        "learn_threshold" : learnthreshold,
+        "reset_mechanism" : "zero" if resetzero else "subtract",
+        "epochs"          : epochs,
+        "batch_size"      : batchsize, 
+        "learning_rate"   : learningrate
+        }
     
-    print(f"Device: {device}")
-    if torch.cuda.is_available():
-        world_size = torch.cuda.device_count()
-        print(f"Available CUDA devices: {world_size}")
-        for i in range(torch.cuda.device_count()):
-            print(
-                f"{torch.cuda.get_device_properties(i).name}."
-                f" Total memory: {torch.cuda.get_device_properties(i).total_memory//2**20} MB."
-                f" Capabilities: {torch.cuda.get_device_properties(i).major}.{torch.cuda.get_device_properties(i).minor}"
-            )
-
-    print(
-        f"\nPerforming the training loop with {epochs} epochs."
-        f"\nBatch size is {batchsize}."
-        f"\nLearning rate is set to {learningrate}\n "
-    )
-
     mp.spawn(
         training_fn,
-        args=(world_size, outdir, checkpoint,
-              { 
-                "filter_time"     : filter_time,
-                "time_window"     : time, 
-                "n_time_bins"     : time,
-                "learn_beta"      : learnbeta,
-                "learn_threshold" : learnthreshold,
-                "reset_mechanism" : "zero" if resetzero else "subtract",
-                "epochs"          : epochs,
-                "batch_size"      : batchsize, 
-                "learning_rate"   : learningrate
-              }),
-        nprocs = world_size,
+        args=(gpu_count, outdir, checkpoint, kwargs),
+        nprocs = gpu_count,
         join = True
     )
-    
-    
+ 
 
 
 @cli.command()
@@ -172,10 +172,29 @@ def test(infile, filter_time, time):
         )
     )
     print(f"Device: {device}")
+    
+    kwargs = { 
+        "filter_time"     : filter_time,
+        "time_window"     : time, 
+        "n_time_bins"     : time,
+        }
 
     ## Getting the dataset
-    dataset = DVSGestureTimeWindow(32, filter_time, time)
-    cnn = CNN(dataset.ishape[2], dataset.nclasses)
+    dataset = DVSGestureTimeBins(
+        batch_size = kwargs.get("batch_size", 32),
+        filter_time = kwargs.get("filter_time", 5000),
+        n_time_bins = kwargs.get("n_time_bins", 32),
+    )
+    
+    print(f"Dataset {dataset.__class__.__name__} loaded. Input shape: {dataset.ishape}, number of classes: {dataset.nclasses}")
+    print(f"kwargs: {json.dumps(kwargs, indent=4)}")
+    
+    cnn = CNN(
+        dataset.ishape[2],
+        dataset.nclasses,
+        kwargs.get("neuron_model", snntorch.Leaky), 
+        kwargs = kwargs)
+    
     cnn.model.to(device)
 
     print(cnn.model)

@@ -133,7 +133,7 @@ class DVSGestureTimeBins(Dataset):
                     sensor_size = tonic.datasets.DVSGesture.sensor_size, #(self.width, self.height, self.depth),
                     n_time_bins = self.n_time_bins,                      # n_frames frames per trail
                 ),
-                #v2.RandomRotation(10),
+                v2.RandomRotation(10),
                 
             ]
         )
