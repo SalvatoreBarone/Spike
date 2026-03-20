@@ -2,6 +2,7 @@ snntorch
 numpy
 matplotlib
 pandas
+tabulate
 tonic
 tqdm
 click

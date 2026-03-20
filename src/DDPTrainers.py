@@ -99,7 +99,7 @@ class SimpleDDPTrainer:
         self.train_data.sampler.set_epoch(epoch)
         
         if self.gpu_id == 0:
-            pbar = tqdm(total = len(self.train_data), desc = f"Epoch {epoch+1} batches: ", leave = False, bar_format="{desc:30} {percentage:3.0f}% |{bar:40}{r_bar}{bar:-10b}")
+            pbar = tqdm(total = len(self.train_data), desc = f"Epoch {epoch+1}, batches: ", leave = False, bar_format="{desc:30} {percentage:3.0f}% |{bar:40}{r_bar}{bar:-10b}")
             
         for source, targets in self.train_data:
             source = source.to(self.gpu_id)
@@ -136,12 +136,20 @@ class SimpleDDPTrainer:
             total = 0
             acc = 0
             self.model.module.eval()
+            
+            if self.gpu_id == 0:
+                pbar = tqdm(total = len(self.test_data), desc = f"Computing test accuracy: ", leave = False, bar_format="{desc:30} {percentage:3.0f}% |{bar:40}{r_bar}{bar:-10b}")
+        
             for source, targets in iter(self.test_data):
                 source = source.to(self.gpu_id)
                 targets = targets.to(self.gpu_id)
                 spk_rec, _ = self.forward_pass_fn(self.model, source)
                 acc += self.acc_fn(spk_rec, targets) * spk_rec.size(1)
                 total += spk_rec.size(1)
+                
+                if self.gpu_id == 0:
+                    pbar.update(1)
+                    
         self.test_acc_hist.append(acc / total)
 
     def _plot(self):

@@ -10,6 +10,8 @@ from src.DDPTrainers import SimpleDDPTrainer, ddp_setup
 from src.datasets.DVSGesture import DVSGestureTimeWindow, DVSGestureTimeBins
 from src.architectures.CNN import MP4_16C5_MP2_32C3_MP2_2048FC512_512FCnclasses as CNN
 
+from tabulate import tabulate
+
 
 def get_gpu_count():
     device = (
@@ -75,14 +77,15 @@ def training_fn(
     if (rank == 0):
         print(f"Model architecture:\n{cnn.model}")
     
+    loss_fn = SF.mse_count_loss(correct_rate=0.8, incorrect_rate=0.2)
+    acc_fn = SF.accuracy_rate
     optimizer = torch.optim.Adam(
         cnn.model.parameters(),
         lr = kwargs.get("learning_rate", 2e-2),
         betas=(0.9, 0.999)
     )
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, "min", 0.9) 
-    loss_fn = SF.mse_count_loss(correct_rate=0.8, incorrect_rate=0.2)
-    acc_fn = SF.accuracy_rate
+
 
     trainer = SimpleDDPTrainer(
         cnn.model, forward_pass, dataset.train_loader, dataset.test_loader, loss_fn, acc_fn, optimizer, scheduler, rank, save_every, outdir
@@ -90,6 +93,79 @@ def training_fn(
     trainer.train(kwargs.get("epochs", 1))
     destroy_process_group()
 
+
+def ablation_nf(
+    # DDP parameters
+    rank: int,
+    world_size: int,
+    
+    # Other parameters
+    outdir: str,
+    
+    ## Additional keyword arguments for neuron model
+    kwargs
+):
+    ddp_setup(rank, world_size)
+    
+    results = []
+
+    dataset = DVSGestureTimeBins(
+        batch_size = kwargs.get("batch_size", 32),
+        filter_time = kwargs.get("filter_time", 5000),
+        n_time_bins = kwargs.get("n_time_bins", 32),
+        rank=rank
+    )
+    
+    if (rank == 0):
+        print(f"Dataset {dataset.__class__.__name__} loaded. Input shape: {dataset.ishape}, number of classes: {dataset.nclasses}")
+        
+    loss_fn = SF.mse_count_loss(correct_rate=0.8, incorrect_rate=0.2)
+    acc_fn = SF.accuracy_rate
+    
+    beta = [0.5, "learned"]
+    threashold = [1, "learned"]
+    reset = ["subtract", "zero"]
+    for b in beta:
+        for t in threashold:
+            for r in reset:
+                kwargs["learn_beta"] = (b == "learned")
+                kwargs["learn_threshold"] = (t == "learned")
+                kwargs["reset_mechanism"] = r
+                
+                workdir = f"{outdir}/beta_{b}_threshold_{t}_reset_{r}"
+                mkpath(workdir)
+                
+                cnn = CNN(
+                    dataset.ishape[2],
+                    dataset.nclasses,
+                    snntorch.Leaky, 
+                    kwargs = kwargs)
+                
+                optimizer = torch.optim.Adam(
+                    cnn.model.parameters(),
+                    lr = kwargs.get("learning_rate", 2e-2),
+                    betas=(0.9, 0.999)
+                )
+                scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, "min", 0.9) 
+
+                if rank == 0:
+                     print(f"kwargs: {json.dumps(kwargs, indent=4)}")
+                
+                trainer = SimpleDDPTrainer(
+                    cnn.model, forward_pass, dataset.train_loader, dataset.test_loader, loss_fn, acc_fn, optimizer, scheduler, rank, 5, workdir
+                )
+                
+                trainer.train(kwargs.get("epochs", 30))
+
+                results.append([b, t, r, trainer.train_acc_hist[-1], trainer.test_acc_hist[-1], trainer.loss_hist[-1]])
+                
+    if rank == 0:
+        print(tabulate(results, headers=["Beta", "Threshold", "Reset", "Train Acc", "Test Acc", "Final Loss"]))
+        with open(f"{outdir}/ablation_results.md", "w") as f:
+             f.write(tabulate(results, headers=["Beta", "Threshold", "Reset", "Train Acc", "Test Acc", "Final Loss"]))         
+                
+    destroy_process_group() 
+        
 
 @click.group()
 def cli():
@@ -207,6 +283,43 @@ def test(infile, filter_time, time):
     test_accuracy = compute_accuracy(device, dataset.test_loader, cnn.model)
     print(f"Test accuracy: {test_accuracy * 100:.2f}%\n")
 
+
+@cli.command()
+@click.argument("outdir", type=click.Path(readable=True, writable=True, dir_okay=True, file_okay=False))
+@click.option(
+    "-f", "--filter_time", type=int, default=10000, help="Denoising filter time in microseconds. Smaller filter_time will filter more events."
+    )
+@click.option(
+    "-t",
+    "--time",
+    type=int,
+    default=20000,
+    help="Time window. --time_window=1000 integrates events into 1000us bins. Larger time window allows for smaller tensors.",
+)
+@click.option("-b", "--batchsize", type=int, default=128, help="batch size")
+@click.option("-e", "--epochs", type=int, default=1, help="Number of training epochs")
+@click.option("-l", "--learningrate", type=float, default=2e-2, help="learning rate")
+def ablation(outdir, filter_time, time, batchsize, epochs, learningrate):
+
+    mkpath(outdir)
+     
+    gpu_count = get_gpu_count()
+   
+    kwargs = { 
+        "filter_time"     : filter_time,
+        "time_window"     : time, 
+        "n_time_bins"     : time,
+        "epochs"          : epochs,
+        "batch_size"      : batchsize, 
+        "learning_rate"   : learningrate
+        }
+
+    mp.spawn(
+        ablation_nf,
+        args=(gpu_count, outdir, kwargs),
+        nprocs = gpu_count,
+        join = True
+    )
 
 if __name__ == "__main__":
     cli()
