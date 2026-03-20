@@ -125,6 +125,9 @@ def ablation_nf(
     beta = [0.5, "learned"]
     threashold = [1, "learned"]
     reset = ["subtract", "zero"]
+    
+    kwargs["beta"] = beta[0]
+    kwargs["threshold"] = threashold[0]
     for b in beta:
         for t in threashold:
             for r in reset:

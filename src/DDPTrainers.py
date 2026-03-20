@@ -86,12 +86,14 @@ class SimpleDDPTrainer:
                     f"\tTraining accuracy: {self.train_acc_hist[-1]*100:.2f}%.\n"
                     f"\tTest accuracy: {self.test_acc_hist[-1]*100:.2f}%"
                 )
+                
             if self.gpu_id == 0 and epoch+1 % self.save_every == 0:
                 self._save_snapshot(epoch)
                 
         if self.gpu_id == 0:
             self._plot()
             self.save()
+            
         if os.path.exists(self.snapshot_path):
             os.remove(self.snapshot_path)
 
