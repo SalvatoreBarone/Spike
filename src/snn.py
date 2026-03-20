@@ -1,6 +1,7 @@
 
 import torch, snntorch
 from snntorch import functional as SF, utils, surrogate
+from tqdm import tqdm
 
 def get_neuron_model(neuron_model : snntorch.SpikingNeuron, **kwargs):
     """
@@ -68,7 +69,7 @@ def compute_accuracy(
         total, correct = 0, 0
         snn_model.eval()
         dataloader = iter(dataloader)
-        for data, targets in dataloader:
+        for data, targets in tqdm(dataloader, desc="Evaluating the model on the test set:", leave = False, bar_format="{desc:30} {percentage:3.0f}% |{bar:40}{r_bar}{bar:-10b}"):
             data, targets = data.to(device), targets.to(device)
             spk_rec, _ = forward_pass_fn(snn_model, data)
             correct += acc_fn(spk_rec, targets) * spk_rec.size(1)

@@ -159,7 +159,6 @@ def train(outdir, filter_time, time, learnbeta, resetzero, learnthreshold, batch
     default=20000,
     help="Time window. --time_window=1000 integrates events into 1000us bins. Larger time window allows for smaller tensors.",
 )
-
 def test(infile, filter_time, time):
 
     device = (
@@ -184,6 +183,7 @@ def test(infile, filter_time, time):
         batch_size = kwargs.get("batch_size", 32),
         filter_time = kwargs.get("filter_time", 5000),
         n_time_bins = kwargs.get("n_time_bins", 32),
+        sampler = None
     )
     
     print(f"Dataset {dataset.__class__.__name__} loaded. Input shape: {dataset.ishape}, number of classes: {dataset.nclasses}")
@@ -201,6 +201,8 @@ def test(infile, filter_time, time):
 
     print(f"Loading weights from {infile}")
     cnn.model.load_state_dict(torch.load(infile, weights_only=True))
+    print(f"Weights successfully loaded from {infile}")
+    
     cnn.model.eval()
     test_accuracy = compute_accuracy(device, dataset.test_loader, cnn.model)
     print(f"Test accuracy: {test_accuracy * 100:.2f}%\n")

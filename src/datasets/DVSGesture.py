@@ -6,12 +6,13 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 class DVSGestureTimeWindow(Dataset):
-    def __init__(self, batch_size : int = 32, filter_time : int = 10000, time_window_us :  int = 20000, rank : int = 0):
+    def __init__(self, batch_size : int = 32, filter_time : int = 10000, time_window_us :  int = 20000, rank : int = 0, sampler = DistributedSampler):
         super().__init__()
         self.batch_size = batch_size
         self.filter_time = filter_time
         self.time_window_us = time_window_us
         self.rank = rank
+        self.sampler = sampler
         self._get_dataset()        
 
     def _get_dataset(self):
@@ -83,7 +84,7 @@ class DVSGestureTimeWindow(Dataset):
             batch_size = self.batch_size,
             collate_fn=tonic.collation.PadTensors(batch_first=False),
             shuffle=False,
-            sampler=DistributedSampler(train_set),
+            sampler = self.sampler(train_set) if self.sampler is not None else None,
         )
         self.test_loader = DataLoader(
             test_set, collate_fn=tonic.collation.PadTensors(batch_first=False)
@@ -95,7 +96,7 @@ class DVSGestureTimeWindow(Dataset):
         
 
 class DVSGestureTimeBins(Dataset):
-    def __init__(self, batch_size : int = 32, filter_time : int = 10000, n_time_bins : int = 32, rank : int = 0):
+    def __init__(self, batch_size : int = 32, filter_time : int = 10000, n_time_bins : int = 32, rank : int = 0, sampler = DistributedSampler):
         super().__init__()
         self.width = 32
         self.height = 32
@@ -104,6 +105,7 @@ class DVSGestureTimeBins(Dataset):
         self.filter_time = filter_time
         self.n_time_bins = n_time_bins
         self.rank = rank
+        self.sampler = sampler
         self._get_dataset()
         
         
@@ -186,7 +188,7 @@ class DVSGestureTimeBins(Dataset):
             batch_size = self.batch_size,
             collate_fn=tonic.collation.PadTensors(batch_first=False),
             shuffle=False,
-            sampler=DistributedSampler(train_set),
+            sampler=self.sampler(train_set) if self.sampler is not None else None,
         )
         self.test_loader = DataLoader(
             test_set, 
