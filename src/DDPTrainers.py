@@ -115,15 +115,15 @@ class SimpleDDPTrainer:
     def _run_batch(self, source, targets):
         self.model.module.train()
         # propagating one batch through the network and evaluating loss
-        spk_rec, _ = self.forward_pass_fn(self.model.module, source)
-        loss_val = self.loss_fn(spk_rec, targets)
+        recs = self.forward_pass_fn(self.model.module, source)
+        loss_val = self.loss_fn(recs[0], targets)
          # Gradient calculation + weight update
         self.optimizer.zero_grad()
         loss_val.backward()
         self.optimizer.step()
         # Store loss history for future plotting
         self.loss_hist.append(loss_val.item())
-        self.train_acc_hist.append(self.acc_fn(spk_rec, targets))
+        self.train_acc_hist.append(self.acc_fn(recs[0], targets))
         
         # Step the scheduler at the end of each epoch
         if self.scheduler is not None:
@@ -145,9 +145,9 @@ class SimpleDDPTrainer:
             for source, targets in iter(self.test_data):
                 source = source.to(self.gpu_id)
                 targets = targets.to(self.gpu_id)
-                spk_rec, _ = self.forward_pass_fn(self.model, source)
-                acc += self.acc_fn(spk_rec, targets) * spk_rec.size(1)
-                total += spk_rec.size(1)
+                recs = self.forward_pass_fn(self.model, source)
+                acc += self.acc_fn(recs[0], targets) * recs[0].size(1)
+                total += recs[0].size(1)
                 
                 if self.gpu_id == 0:
                     pbar.update(1)

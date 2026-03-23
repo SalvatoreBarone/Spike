@@ -1,6 +1,11 @@
 
 import torch, snntorch
 from snntorch import functional as SF, utils, surrogate
+from snntorch import spikeplot as splt
+
+import torch
+import matplotlib.pyplot as plt
+
 from tqdm import tqdm
 
 def get_neuron_model(neuron_model : snntorch.SpikingNeuron, **kwargs):
@@ -60,6 +65,18 @@ def forward_pass(snn_model: torch.nn.Module, samples: torch.Tensor):
         mem_rec.append(mem_out)
     return torch.stack(spk_rec), torch.stack(mem_rec)
 
+def forward_pass_2nd(snn_model: torch.nn.Module, samples: torch.Tensor):
+    spk_rec = []
+    syn_rec = []
+    mem_rec = []
+    utils.reset(snn_model)  # resets hidden states for all LIF neurons in net
+    for step in range(samples.size(0)):  # data.size(0) = number of time steps
+        spk_out, syn_out, mem_out = snn_model(samples[step])
+        spk_rec.append(spk_out)
+        syn_rec.append(syn_out)
+        mem_rec.append(mem_out)
+    return torch.stack(spk_rec), torch.stack(syn_rec), torch.stack(mem_rec)
+
 def compute_accuracy(
     device, dataloader : torch.utils.data.DataLoader,
     snn_model: torch.nn.Module,
@@ -75,3 +92,60 @@ def compute_accuracy(
             correct += acc_fn(spk_rec, targets) * spk_rec.size(1)
             total += spk_rec.size(1)
     return correct / total
+
+
+def plot_spk_cur_mem_spk(spk_in, syn_rec, mem_rec, spk_rec, outfile = "spk_cur_mem_spk_plot.pdf"):
+    # Generate Plots
+    fig, ax = plt.subplots(4, figsize=(8,7), sharex=True,
+                        gridspec_kw = {'height_ratios': [0.4, 1, 1, 0.4]})
+
+    # Plot input current
+    splt.raster(spk_in, ax[0], s=400, c="black", marker="|")
+    ax[0].set_ylabel("Input Spikes")
+    ax[0].set_title("Synaptic Conductance-based Neuron Model With Input Spikes")
+    ax[0].set_yticks([])
+
+    # Plot membrane potential
+    ax[1].plot(syn_rec.detach().numpy())
+    ax[1].set_ylim([0, 0.5])
+    ax[1].set_ylabel("Synaptic Current ($I_{syn}$)")
+    plt.xlabel("Time step")
+
+    # Plot membrane potential
+    ax[2].plot(mem_rec.detach().numpy())
+    ax[2].set_ylim([0, 1.5])
+    ax[2].set_ylabel("Membrane Potential ($U_{mem}$)")
+    ax[2].axhline(y=1, alpha=0.25, linestyle="dashed", c="black", linewidth=2)
+    plt.xlabel("Time step")
+
+    # Plot output spike using spikeplot
+    splt.raster(spk_rec, ax[3], s=400, c="black", marker="|")
+    plt.ylabel("Output spikes")
+    ax[3].set_yticks([])
+
+    plt.savefig(outfile)
+
+def plot_spk_mem_spk(spk_in, mem_rec, spk_rec, title, outfile = "spk_mem_spk_plot.pdf"):
+    # Generate Plots
+    fig, ax = plt.subplots(3, figsize=(8,6), sharex=True,
+                        gridspec_kw = {'height_ratios': [0.4, 1, 0.4]})
+
+    # Plot input current
+    splt.raster(spk_in, ax[0], s=400, c="black", marker="|")
+    ax[0].set_ylabel("Input Spikes")
+    ax[0].set_title(title)
+    ax[0].set_yticks([])
+
+    # Plot membrane potential
+    ax[1].plot(mem_rec.detach())
+    ax[1].set_ylim([0, 0.6])
+    ax[1].set_ylabel("Membrane Potential ($U_{mem}$)")
+    ax[1].axhline(y=0.5, alpha=0.25, linestyle="dashed", c="black", linewidth=2)
+    plt.xlabel("Time step")
+
+    # Plot output spike using spikeplot
+    splt.raster(spk_rec, ax[2], s=400, c="black", marker="|")
+    ax[2].set_yticks([])
+    ax[2].set_ylabel("Output Spikes")
+
+    plt.savefig(outfile)

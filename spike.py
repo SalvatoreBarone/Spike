@@ -3,9 +3,12 @@ import click, torch, tonic, snntorch, torch.multiprocessing as mp, warnings, jso
 warnings.filterwarnings("ignore")
 
 from snntorch import functional as SF
+from snntorch import spikeplot as splt
+from snntorch import spikegen
+
 from distutils.dir_util import mkpath
 from torch.distributed import destroy_process_group
-from src.snn import forward_pass, compute_accuracy
+from src.snn import forward_pass, forward_pass_2nd, compute_accuracy, plot_spk_cur_mem_spk
 from src.DDPTrainers import SimpleDDPTrainer, ddp_setup
 from src.datasets.DVSGesture import DVSGestureTimeBins
 from src.architectures.CNN import MP4_16C5_MP2_32C3_MP2_2048FC512_512FCnclasses as CNN
@@ -122,16 +125,15 @@ def ablation_nf(
     loss_fn = SF.mse_count_loss(correct_rate=0.8, incorrect_rate=0.2)
     acc_fn = SF.accuracy_rate
     
-    beta = [0.5, "learned"]
+    beta = [0.9, 0.5, "learned"]
     threashold = [1, "learned"]
     reset = ["subtract", "zero"]
-    
-    kwargs["beta"] = beta[0]
-    kwargs["threshold"] = threashold[0]
     for b in beta:
         for t in threashold:
             for r in reset:
+                kwargs["beta"] = beta[0] if b == "learned" else b
                 kwargs["learn_beta"] = (b == "learned")
+                kwargs["threshold"] = threashold[0] if t == "learned" else t
                 kwargs["learn_threshold"] = (t == "learned")
                 kwargs["reset_mechanism"] = r
                 
@@ -198,21 +200,26 @@ def ablation_2nd_nf(
     loss_fn = SF.mse_count_loss(correct_rate=0.8, incorrect_rate=0.2)
     acc_fn = SF.accuracy_rate
     
-    alpha = [0.5, "learned"]
-    beta = [0.5, "learned"]
+    alpha = [0.9, 0.5, "learned"]
+    beta = [0.9, 0.5, "learned"]
     threashold = [1, "learned"]
     reset = ["subtract", "zero"]
     
-    kwargs["alpha"] = alpha[0]
-    kwargs["beta"] = beta[0]
-    kwargs["threshold"] = threashold[0]
+   
     for a in alpha:
         for b in beta:
             for t in threashold:
                 for r in reset:
+                    
+                    kwargs["alpha"] = alpha[0] if a == "learned" else a
                     kwargs["learn_alpha"] = (a == "learned") 
+                    
+                    kwargs["beta"] = beta[0] if b == "learned" else b
                     kwargs["learn_beta"] = (b == "learned")
+                    
+                    kwargs["threshold"] = threashold[0] if t == "learned" else t
                     kwargs["learn_threshold"] = (t == "learned")
+                    
                     kwargs["reset_mechanism"] = r
                     
                     workdir = f"{outdir}/alpha_{a}_beta_{b}_threshold_{t}_reset_{r}"
@@ -235,7 +242,7 @@ def ablation_2nd_nf(
                         print(f"kwargs: {json.dumps(kwargs, indent=4)}")
                     
                     trainer = SimpleDDPTrainer(
-                        cnn.model, forward_pass, dataset.train_loader, dataset.test_loader, loss_fn, acc_fn, optimizer, scheduler, rank, 5, workdir
+                        cnn.model, forward_pass_2nd, dataset.train_loader, dataset.test_loader, loss_fn, acc_fn, optimizer, scheduler, rank, 5, workdir
                     )
                     
                     trainer.train(kwargs.get("epochs", 30))
@@ -403,6 +410,45 @@ def ablation(outdir, order, filter_time, time, batchsize, epochs, learningrate):
         nprocs = gpu_count,
         join = True
     )
+    
+    
+@cli.command()
+@click.option("-a", "--alpha", type=float, default=0.9, help="Alpha parameter for the 2nd-order neuron model.")
+@click.option("-b", "--beta", type=float, default=0.9, help="Beta parameter for the 2nd-order neuron model.")
+@click.option("-t", "--threshold", type=float, default=1.0, help="Threshold parameter for the 2nd-order neuron model.")
+@click.option("-r", "--reset", type=click.Choice(["subtract", "zero"]), default="subtract", help="Reset mechanism for the 2nd-order neuron model.")
+@click.option("-n", "--num_steps", type=int, default=200, help="Number of time steps to simulate.")
+def simulate(alpha, beta, threshold, reset, num_steps):
+    # Temporal dynamics
+
+    # Initialize 2nd-order LIF neuron
+    lif1 = snntorch.Synaptic(alpha=alpha, beta=beta, threshold=threshold, reset_mechanism=reset)
+
+    # Periodic spiking input, spk_in = 0.2 V
+    w = 0.2
+    spk_period = torch.cat((torch.ones(1)*w, torch.zeros(9)), 0)
+    spk_in = spk_period.repeat(20)
+
+    # Initialize hidden states and output
+    syn, mem = lif1.reset_mem()
+    spk_out = torch.zeros(1)
+    
+    syn_rec = []
+    mem_rec = []
+    spk_rec = []
+    # Simulate neurons
+    for step in range(num_steps):
+        spk_out, syn, mem = lif1(spk_in[step], syn, mem)
+        spk_rec.append(spk_out)
+        syn_rec.append(syn)
+        mem_rec.append(mem)
+
+    # convert lists to tensors
+    spk_rec = torch.stack(spk_rec)
+    syn_rec = torch.stack(syn_rec)
+    mem_rec = torch.stack(mem_rec)
+
+    plot_spk_cur_mem_spk(spk_in, syn_rec, mem_rec, spk_rec)
 
 if __name__ == "__main__":
     cli()
