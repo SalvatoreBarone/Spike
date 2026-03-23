@@ -7,7 +7,7 @@ from distutils.dir_util import mkpath
 from torch.distributed import destroy_process_group
 from src.snn import forward_pass, compute_accuracy
 from src.DDPTrainers import SimpleDDPTrainer, ddp_setup
-from src.datasets.DVSGesture import DVSGestureTimeWindow, DVSGestureTimeBins
+from src.datasets.DVSGesture import DVSGestureTimeBins
 from src.architectures.CNN import MP4_16C5_MP2_32C3_MP2_2048FC512_512FCnclasses as CNN
 
 from tabulate import tabulate
@@ -169,6 +169,85 @@ def ablation_nf(
                 
     destroy_process_group() 
         
+        
+def ablation_2nd_nf(
+    # DDP parameters
+    rank: int,
+    world_size: int,
+    
+    # Other parameters
+    outdir: str,
+    
+    ## Additional keyword arguments for neuron model
+    kwargs
+):
+    ddp_setup(rank, world_size)
+    
+    results = []
+
+    dataset = DVSGestureTimeBins(
+        batch_size = kwargs.get("batch_size", 32),
+        filter_time = kwargs.get("filter_time", 5000),
+        n_time_bins = kwargs.get("n_time_bins", 32),
+        rank=rank
+    )
+    
+    if (rank == 0):
+        print(f"Dataset {dataset.__class__.__name__} loaded. Input shape: {dataset.ishape}, number of classes: {dataset.nclasses}")
+        
+    loss_fn = SF.mse_count_loss(correct_rate=0.8, incorrect_rate=0.2)
+    acc_fn = SF.accuracy_rate
+    
+    alpha = [0.5, "learned"]
+    beta = [0.5, "learned"]
+    threashold = [1, "learned"]
+    reset = ["subtract", "zero"]
+    
+    kwargs["alpha"] = alpha[0]
+    kwargs["beta"] = beta[0]
+    kwargs["threshold"] = threashold[0]
+    for a in alpha:
+        for b in beta:
+            for t in threashold:
+                for r in reset:
+                    kwargs["learn_alpha"] = (a == "learned") 
+                    kwargs["learn_beta"] = (b == "learned")
+                    kwargs["learn_threshold"] = (t == "learned")
+                    kwargs["reset_mechanism"] = r
+                    
+                    workdir = f"{outdir}/alpha_{a}_beta_{b}_threshold_{t}_reset_{r}"
+                    mkpath(workdir)
+                    
+                    cnn = CNN(
+                        dataset.ishape[2],
+                        dataset.nclasses,
+                        snntorch.Synaptic, 
+                        kwargs = kwargs)
+                    
+                    optimizer = torch.optim.Adam(
+                        cnn.model.parameters(),
+                        lr = kwargs.get("learning_rate", 2e-2),
+                        betas=(0.9, 0.999)
+                    )
+                    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, "min", 0.9) 
+
+                    if rank == 0:
+                        print(f"kwargs: {json.dumps(kwargs, indent=4)}")
+                    
+                    trainer = SimpleDDPTrainer(
+                        cnn.model, forward_pass, dataset.train_loader, dataset.test_loader, loss_fn, acc_fn, optimizer, scheduler, rank, 5, workdir
+                    )
+                    
+                    trainer.train(kwargs.get("epochs", 30))
+
+                    results.append([a, b, t, r, trainer.train_acc_hist[-1], trainer.test_acc_hist[-1], trainer.loss_hist[-1]])
+                
+    if rank == 0:
+        print(tabulate(results, headers=["Alpha", "Beta", "Threshold", "Reset", "Train Acc", "Test Acc", "Final Loss"]))
+        with open(f"{outdir}/ablation_results.md", "w") as f:
+             f.write(tabulate(results, headers=["Alpha", "Beta", "Threshold", "Reset", "Train Acc", "Test Acc", "Final Loss"]))         
+                
+    destroy_process_group() 
 
 @click.group()
 def cli():
@@ -289,6 +368,7 @@ def test(infile, filter_time, time):
 
 @cli.command()
 @click.argument("outdir", type=click.Path(readable=True, writable=True, dir_okay=True, file_okay=False))
+@click.argument("order", type=click.Choice(["1", "2"]))
 @click.option(
     "-f", "--filter_time", type=int, default=10000, help="Denoising filter time in microseconds. Smaller filter_time will filter more events."
     )
@@ -302,7 +382,7 @@ def test(infile, filter_time, time):
 @click.option("-b", "--batchsize", type=int, default=128, help="batch size")
 @click.option("-e", "--epochs", type=int, default=1, help="Number of training epochs")
 @click.option("-l", "--learningrate", type=float, default=2e-2, help="learning rate")
-def ablation(outdir, filter_time, time, batchsize, epochs, learningrate):
+def ablation(outdir, order, filter_time, time, batchsize, epochs, learningrate):
 
     mkpath(outdir)
      
@@ -318,7 +398,7 @@ def ablation(outdir, filter_time, time, batchsize, epochs, learningrate):
         }
 
     mp.spawn(
-        ablation_nf,
+        ablation_nf if order == "1" else ablation_2nd_nf,
         args=(gpu_count, outdir, kwargs),
         nprocs = gpu_count,
         join = True
