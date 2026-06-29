@@ -65,8 +65,8 @@ class DVSGestureTimeWindow(Dataset):
         If you have a large amount of RAM available, you can speed up dataloading further by caching to main memory instead of to disk.
 
         """   
-        train_set = MemoryCachedDataset(trainset)
-        test_set =  MemoryCachedDataset(testset)
+        self.train_set = MemoryCachedDataset(trainset)
+        self.test_set =  MemoryCachedDataset(testset)
         
         """
         Because event recordings have different lengths, we are going to provide a collation function
@@ -80,14 +80,14 @@ class DVSGestureTimeWindow(Dataset):
         Therefore, the batch_first=False is of utter importance
         """
         self.train_loader = DataLoader(
-            train_set,
+            self.train_set,
             batch_size = self.batch_size,
             collate_fn=tonic.collation.PadTensors(batch_first=False),
             shuffle=False,
-            sampler = self.sampler(train_set) if self.sampler is not None else None,
+            sampler = self.sampler(self.train_set) if self.sampler is not None else None,
         )
         self.test_loader = DataLoader(
-            test_set, collate_fn=tonic.collation.PadTensors(batch_first=False)
+            self.test_set, collate_fn=tonic.collation.PadTensors(batch_first=False)
         )
 
         data_it, _ = next(iter(self.train_loader))
@@ -170,8 +170,8 @@ class DVSGestureTimeBins(Dataset):
         If you have a large amount of RAM available, you can speed up dataloading further by caching to main memory instead of to disk.
 
         """   
-        train_set = MemoryCachedDataset(trainset)
-        test_set =  MemoryCachedDataset(testset)
+        self.train_set = MemoryCachedDataset(trainset)
+        self.test_set =  MemoryCachedDataset(testset)
         
         """
         Because event recordings have different lengths, we are going to provide a collation function
@@ -185,14 +185,14 @@ class DVSGestureTimeBins(Dataset):
         Therefore, the batch_first=False is of utter importance
         """
         self.train_loader = DataLoader(
-            train_set,
+            self.train_set,
             batch_size = self.batch_size,
             collate_fn=tonic.collation.PadTensors(batch_first=False),
             shuffle=False,
-            sampler=self.sampler(train_set) if self.sampler is not None else None,
+            sampler=self.sampler(self.train_set) if self.sampler is not None else None,
         )
         self.test_loader = DataLoader(
-            test_set, 
+            self.test_set, 
             collate_fn=tonic.collation.PadTensors(batch_first=False)
         )
 
