@@ -93,6 +93,7 @@ class DVSGestureTimeWindow(Dataset):
         data_it, _ = next(iter(self.train_loader))
         self.ishape = data_it.size()
         self.nclasses = len(tonic.datasets.DVSGesture.classes)
+        self.classes = tonic.datasets.DVSGesture.classes
         
 
 class DVSGestureTimeBins(Dataset):
@@ -198,5 +199,6 @@ class DVSGestureTimeBins(Dataset):
         data_it, _ = next(iter(self.train_loader))
         self.ishape = data_it.size()
         self.nclasses = len(tonic.datasets.DVSGesture.classes)
+        self.classes = tonic.datasets.DVSGesture.classes
         
         

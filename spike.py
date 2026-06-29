@@ -54,12 +54,6 @@ def training_fn(
 ):
     ddp_setup(rank, world_size)
 
-    # dataset = DVSGestureTimeWindow(
-    #     batch_size = kwargs.get("batch_size", 64),
-    #     filter_time = kwargs.get("filter_time", 10000),
-    #     time_window_us = kwargs.get("time_window", 20000)
-    # )
-    
     dataset = DVSGestureTimeBins(
         batch_size = kwargs.get("batch_size", 32),
         filter_time = kwargs.get("filter_time", 5000),
