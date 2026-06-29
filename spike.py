@@ -1,5 +1,5 @@
 #!python
-import click, torch, tonic, snntorch, torch.multiprocessing as mp, warnings, json
+import click, torch, tonic, snntorch, torch.multiprocessing as mp, warnings, json, itertools
 warnings.filterwarnings("ignore")
 
 from snntorch import functional as SF
@@ -97,7 +97,7 @@ def training_fn(
     destroy_process_group()
 
 
-def ablation_nf(
+def ablation_1st_fn(
     # DDP parameters
     rank: int,
     world_size: int,
@@ -110,64 +110,64 @@ def ablation_nf(
 ):
     ddp_setup(rank, world_size)
     
-    results = []
-
-    dataset = DVSGestureTimeBins(
-        batch_size = kwargs.get("batch_size", 32),
-        filter_time = kwargs.get("filter_time", 5000),
-        n_time_bins = kwargs.get("n_time_bins", 32),
-        rank=rank
-    )
-    
-    if (rank == 0):
-        print(f"Dataset {dataset.__class__.__name__} loaded. Input shape: {dataset.ishape}, number of classes: {dataset.nclasses}")
-        
     loss_fn = SF.mse_count_loss(correct_rate=0.8, incorrect_rate=0.2)
     acc_fn = SF.accuracy_rate
     
-    beta = [0.9, 0.5, "learned"]
-    threashold = [1, "learned"]
-    reset = ["subtract", "zero"]
-    for b in beta:
-        for t in threashold:
-            for r in reset:
-                kwargs["beta"] = beta[0] if b == "learned" else b
-                kwargs["learn_beta"] = (b == "learned")
-                kwargs["threshold"] = threashold[0] if t == "learned" else t
-                kwargs["learn_threshold"] = (t == "learned")
-                kwargs["reset_mechanism"] = r
-                
-                workdir = f"{outdir}/beta_{b}_threshold_{t}_reset_{r}"
-                mkpath(workdir)
-                
-                cnn = CNN(
-                    dataset.ishape[2],
-                    dataset.nclasses,
-                    snntorch.Leaky, 
-                    kwargs = kwargs)
-                
-                optimizer = torch.optim.Adam(
-                    cnn.model.parameters(),
-                    lr = kwargs.get("learning_rate", 2e-2),
-                    betas=(0.9, 0.999)
-                )
-                scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, "min", 0.9) 
+    results = []
+    
+    filter_time = kwargs.get("filter_time", [1000, 2000, 3000, 4000, 5000, 7000,  10000]) 
+    n_time_bins = kwargs.get("n_time_bins", [32, 64, 128, 256])
 
-                if rank == 0:
-                     print(f"kwargs: {json.dumps(kwargs, indent=4)}")
-                
-                trainer = SimpleDDPTrainer(
-                    cnn.model, forward_pass, dataset.train_loader, dataset.test_loader, loss_fn, acc_fn, optimizer, scheduler, rank, 5, workdir
-                )
-                
-                trainer.train(kwargs.get("epochs", 30))
+    beta = kwargs.get("beta", [0.9, 0.5, "learned"])
+    threashold = kwargs.get("threshold", [1, "learned"])
+    reset = kwargs.get("reset", ["subtract", "zero"]) 
+    
+    for filter, bins, b, t, r in itertools.product(filter_time, n_time_bins, beta, threashold, reset):
+        
+        dataset = DVSGestureTimeBins(
+            batch_size = kwargs.get("batch_size", 32),
+            filter_time = filter,
+            n_time_bins = bins,
+            rank=rank
+        ) 
+        
+        kwargs["beta"] = beta[0] if b == "learned" else b
+        kwargs["learn_beta"] = (b == "learned")
+        kwargs["threshold"] = threashold[0] if t == "learned" else t
+        kwargs["learn_threshold"] = (t == "learned")
+        kwargs["reset"] = r
+        
+        if rank == 0:
+            print(f"Filter time: {filter}, bins: {bins}, kwargs: {json.dumps(kwargs, indent=4)}")
+            
+        workdir = f"{outdir}/filter_{filter}_bins_{bins}_beta_{b}_threshold_{t}_reset_{r}"
+        mkpath(workdir)
+        
+        cnn = CNN(
+            dataset.ishape[2],
+            dataset.nclasses,
+            snntorch.Leaky, 
+            kwargs = kwargs)
+        
+        optimizer = torch.optim.Adam(
+            cnn.model.parameters(),
+            lr = kwargs.get("learning_rate", 2e-2),
+            betas=(0.9, 0.999)
+        )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, "min", 0.9) 
 
-                results.append([b, t, r, trainer.train_acc_hist[-1], trainer.test_acc_hist[-1], trainer.loss_hist[-1]])
+        
+        trainer = SimpleDDPTrainer(
+            cnn.model, forward_pass, dataset.train_loader, dataset.test_loader, loss_fn, acc_fn, optimizer, scheduler, rank, 5, workdir
+        )
+        
+        trainer.train(kwargs.get("epochs", 30))
+
+        results.append([filter, bins, b, t, r, trainer.train_acc_hist[-1], trainer.test_acc_hist[-1], trainer.loss_hist[-1]])
                 
     if rank == 0:
-        print(tabulate(results, headers=["Beta", "Threshold", "Reset", "Train Acc", "Test Acc", "Final Loss"]))
         with open(f"{outdir}/ablation_results.md", "w") as f:
-             f.write(tabulate(results, headers=["Beta", "Threshold", "Reset", "Train Acc", "Test Acc", "Final Loss"]))         
+             f.write(tabulate(results, headers=["Filter Time", "Time Bins", "Beta", "Threshold", "Reset", "Train Acc", "Test Acc", "Final Loss"],  tablefmt="github", floatfmt=".4f"))         
                 
     destroy_process_group() 
         
@@ -185,74 +185,66 @@ def ablation_2nd_nf(
 ):
     ddp_setup(rank, world_size)
     
-    results = []
-
-    dataset = DVSGestureTimeBins(
-        batch_size = kwargs.get("batch_size", 32),
-        filter_time = kwargs.get("filter_time", 5000),
-        n_time_bins = kwargs.get("n_time_bins", 32),
-        rank=rank
-    )
-    
-    if (rank == 0):
-        print(f"Dataset {dataset.__class__.__name__} loaded. Input shape: {dataset.ishape}, number of classes: {dataset.nclasses}")
-        
     loss_fn = SF.mse_count_loss(correct_rate=0.8, incorrect_rate=0.2)
     acc_fn = SF.accuracy_rate
     
-    alpha = [0.9, 0.5, "learned"]
-    beta = [0.9, 0.5, "learned"]
-    threashold = [1, "learned"]
-    reset = ["subtract", "zero"]
+    results = []
     
-   
-    for a in alpha:
-        for b in beta:
-            for t in threashold:
-                for r in reset:
-                    
-                    kwargs["alpha"] = alpha[0] if a == "learned" else a
-                    kwargs["learn_alpha"] = (a == "learned") 
-                    
-                    kwargs["beta"] = beta[0] if b == "learned" else b
-                    kwargs["learn_beta"] = (b == "learned")
-                    
-                    kwargs["threshold"] = threashold[0] if t == "learned" else t
-                    kwargs["learn_threshold"] = (t == "learned")
-                    
-                    kwargs["reset_mechanism"] = r
-                    
-                    workdir = f"{outdir}/alpha_{a}_beta_{b}_threshold_{t}_reset_{r}"
-                    mkpath(workdir)
-                    
-                    cnn = CNN(
-                        dataset.ishape[2],
-                        dataset.nclasses,
-                        snntorch.Synaptic, 
-                        kwargs = kwargs)
-                    
-                    optimizer = torch.optim.Adam(
-                        cnn.model.parameters(),
-                        lr = kwargs.get("learning_rate", 2e-2),
-                        betas=(0.9, 0.999)
-                    )
-                    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, "min", 0.9) 
+    filter_time = kwargs.get("filter_time", [1000, 2000, 3000, 4000, 5000, 7000,  10000]) 
+    n_time_bins = kwargs.get("n_time_bins", [32, 64, 128, 256])
 
-                    if rank == 0:
-                        print(f"kwargs: {json.dumps(kwargs, indent=4)}")
-                    
-                    trainer = SimpleDDPTrainer(
-                        cnn.model, forward_pass_2nd, dataset.train_loader, dataset.test_loader, loss_fn, acc_fn, optimizer, scheduler, rank, 5, workdir
-                    )
-                    
-                    trainer.train(kwargs.get("epochs", 30))
+    alpha = kwargs.get("alpha", [0.9, 0.5, "learned"])  
+    beta = kwargs.get("beta", [0.9, 0.5, "learned"])
+    threashold = kwargs.get("threshold", [1, "learned"])
+    reset = kwargs.get("reset", ["subtract", "zero"]) 
+    
+    for filter, bins, a, b, t, r in itertools.product(filter_time, n_time_bins, alpha, beta, threashold, reset):
+        
+        dataset = DVSGestureTimeBins(
+            batch_size = kwargs.get("batch_size", 32),
+            filter_time = filter,
+            n_time_bins = bins,
+            rank=rank
+        ) 
+        
+        kwargs["alpha"] = alpha[0] if a == "learned" else a
+        kwargs["learn_alpha"] = (a == "learned") 
+        kwargs["beta"] = beta[0] if b == "learned" else b
+        kwargs["learn_beta"] = (b == "learned")
+        kwargs["threshold"] = threashold[0] if t == "learned" else t
+        kwargs["learn_threshold"] = (t == "learned")
+        kwargs["reset"] = r
+        
+        if rank == 0:
+            print(f"Filter time: {filter}, bins: {bins}, kwargs: {json.dumps(kwargs, indent=4)}")
+        
+        workdir = f"{outdir}/filter_{filter}_bins_{bins}_alpha_{a}_beta_{b}_threshold_{t}_reset_{r}"
+        mkpath(workdir)
+        
+        cnn = CNN(
+            dataset.ishape[2],
+            dataset.nclasses,
+            snntorch.Synaptic, 
+            kwargs = kwargs)
+        
+        optimizer = torch.optim.Adam(
+            cnn.model.parameters(),
+            lr = kwargs.get("learning_rate", 2e-2),
+            betas=(0.9, 0.999)
+        )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, "min", 0.9) 
 
-                    results.append([a, b, t, r, trainer.train_acc_hist[-1], trainer.test_acc_hist[-1], trainer.loss_hist[-1]])
+        trainer = SimpleDDPTrainer(
+            cnn.model, forward_pass_2nd, dataset.train_loader, dataset.test_loader, loss_fn, acc_fn, optimizer, scheduler, rank, 5, workdir
+        )
+        
+        trainer.train(kwargs.get("epochs", 30))
+
+        results.append([filter, bins, a, b, t, r, trainer.train_acc_hist[-1], trainer.test_acc_hist[-1], trainer.loss_hist[-1]])
                 
     if rank == 0:
-        print(tabulate(results, headers=["Alpha", "Beta", "Threshold", "Reset", "Train Acc", "Test Acc", "Final Loss"]))
         with open(f"{outdir}/ablation_results.md", "w") as f:
-             f.write(tabulate(results, headers=["Alpha", "Beta", "Threshold", "Reset", "Train Acc", "Test Acc", "Final Loss"]))         
+             f.write(tabulate(results, headers=["Filter Time", "Time Bins", "Alpha", "Beta", "Threshold", "Reset", "Train Acc", "Test Acc", "Final Loss"],  tablefmt="github", floatfmt=".4f"))         
                 
     destroy_process_group() 
 
@@ -297,7 +289,7 @@ def train(outdir, filter_time, time, learnbeta, resetzero, learnthreshold, batch
         "n_time_bins"     : time,
         "learn_beta"      : learnbeta,
         "learn_threshold" : learnthreshold,
-        "reset_mechanism" : "zero" if resetzero else "subtract",
+        "reset" : "zero" if resetzero else "subtract",
         "epochs"          : epochs,
         "batch_size"      : batchsize, 
         "learning_rate"   : learningrate
@@ -376,36 +368,46 @@ def test(infile, filter_time, time):
 @cli.command()
 @click.argument("outdir", type=click.Path(readable=True, writable=True, dir_okay=True, file_okay=False))
 @click.argument("order", type=click.Choice(["1", "2"]))
-@click.option(
-    "-f", "--filter_time", type=int, default=10000, help="Denoising filter time in microseconds. Smaller filter_time will filter more events."
-    )
-@click.option(
-    "-t",
-    "--time",
-    type=int,
-    default=20000,
-    help="Time window. --time_window=1000 integrates events into 1000us bins. Larger time window allows for smaller tensors.",
-)
 @click.option("-b", "--batchsize", type=int, default=128, help="batch size")
 @click.option("-e", "--epochs", type=int, default=1, help="Number of training epochs")
 @click.option("-l", "--learningrate", type=float, default=2e-2, help="learning rate")
-def ablation(outdir, order, filter_time, time, batchsize, epochs, learningrate):
+
+@click.option("-f", "--filter_time", type=int, default=None, help="Denoising filter time in microseconds. Smaller filter_time will filter more events.")
+@click.option("-t", "--bins", type=int, default=None, help="Number of time bins to integrate events into. Larger number of bins allows for more temporal precision but also larger tensors.")
+
+@click.option("-a", "--alpha", type=float, default=None, help="Alpha parameter for the 2nd-order neuron model.")
+@click.option("-b", "--beta", type=float, default=None, help="Beta parameter for the 2nd-order neuron model.")
+@click.option("-t", "--threshold", type=float, default=None, help="Threshold parameter for the 2nd-order neuron model.")
+@click.option("-r", "--reset", type=click.Choice(["subtract", "zero"]), default=None, help="Reset mechanism for the 2nd-order neuron model.")
+
+def ablation(outdir, order, batchsize, epochs, learningrate, filter_time, bins, alpha, beta, threshold, reset):
 
     mkpath(outdir)
      
     gpu_count = get_gpu_count()
    
     kwargs = { 
-        "filter_time"     : filter_time,
-        "time_window"     : time, 
-        "n_time_bins"     : time,
         "epochs"          : epochs,
         "batch_size"      : batchsize, 
         "learning_rate"   : learningrate
         }
+    
+    if filter_time is not None:
+        kwargs["filter_time"] = [filter_time]
+    if bins is not None:
+        kwargs["n_time_bins"] = [bins]
+    
+    if alpha is not None:
+        kwargs["alpha"] = [alpha]
+    if beta is not None:
+        kwargs["beta"] = [beta]
+    if threshold is not None:
+        kwargs["threshold"] = [threshold]
+    if reset is not None:
+        kwargs["reset"] = [reset]
 
     mp.spawn(
-        ablation_nf if order == "1" else ablation_2nd_nf,
+        ablation_1st_fn if order == "1" else ablation_2nd_nf,
         args=(gpu_count, outdir, kwargs),
         nprocs = gpu_count,
         join = True
@@ -431,7 +433,6 @@ def simulate(order, alpha, beta, threshold, reset, num_steps, voltage, period):
     if order == "1":
         # Initialize LIF neuron
         lif1 = snntorch.Leaky(beta=beta, threshold=threshold, reset_mechanism=reset)
-
 
         # Initialize hidden state and output
         mem = lif1.reset_mem()
