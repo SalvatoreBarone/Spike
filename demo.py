@@ -1,5 +1,6 @@
 #!python
-import click, torch, tonic, snntorch, torch.multiprocessing as mp, warnings, json
+from matplotlib import animation
+import click, torch, tonic, snntorch, torch.multiprocessing as mp, warnings, json, numpy as np, itertools
 warnings.filterwarnings("ignore")
 
 from snntorch import functional as SF
@@ -211,6 +212,7 @@ def test(infile, filter_time, time):
     
 @cli.command()
 @click.argument("infile", type=click.Path(exists=True, readable=True, dir_okay=False))
+@click.argument("sample", type=int)
 @click.option(
     "-f", "--filter_time", type=int, default=10000, help="Denoising filter time in microseconds. Smaller filter_time will filter more events."
     )
@@ -221,7 +223,8 @@ def test(infile, filter_time, time):
     default=20000,
     help="Time window. --time_window=1000 integrates events into 1000us bins. Larger time window allows for smaller tensors.",
 )
-def demo(infile, filter_time, time):
+def demo(infile, sample, filter_time, time):
+        
     device = (
         torch.device("cuda")
         if torch.cuda.is_available()
@@ -248,7 +251,9 @@ def demo(infile, filter_time, time):
     )
     
     print(f"Dataset {dataset.__class__.__name__} loaded. Input shape: {dataset.ishape}, number of classes: {dataset.nclasses}")
+    print(f"Classes: {dataset.classes}")
     print(f"kwargs: {json.dumps(kwargs, indent=4)}")
+    print(f"Classes: {dataset.classes}")
     
     cnn = CNN(
         dataset.ishape[2],
@@ -260,20 +265,58 @@ def demo(infile, filter_time, time):
 
     print(cnn.model)
     
+    print(f"Loading weights from {infile}")
+    cnn.model.load_state_dict(torch.load(infile, weights_only=True))
+    print(f"Weights successfully loaded from {infile}")
     
-    # choose a random sample
-    n = 125
+    cnn.model.eval()
+    with torch.no_grad():
+        cnn.model.eval()
+        dataloader = iter(dataset.test_loader)
+        
+        print(f"Classes: {dataset.classes}")
+        
+        events, target = next(itertools.islice(dataloader, sample, None))
 
-    # index into a single sample and sum the on/off channels
-    sample = (dataset.test_loader.dataset[n][0][:, 0] + dataset.test_loader.dataset[n][0][:, 1])
+        print('The target label is:',target, (dataset.classes[target]))
 
-    #  Plot
-    fig, ax = plt.subplots()
-    anim = splt.animator(a, fig, ax, interval=10)
-    HTML(anim.to_html5_video())
-
-    anim.save('dvsgesture_animator.mp4', writer = 'ffmpeg', fps=50)# choose a random sample
+        data, targets = events.to(device), target.to(device)
+        spk_rec, _ = forward_pass(cnn.model, data)
+        _, idx = spk_rec.sum(dim=0).max(1)
+        
+        print('The predicted label is:',idx, (dataset.classes[idx]))
+        
+        print((targets == idx).detach().cpu().numpy())
     
+    
+@cli.command()
+@click.argument("sample", type=int)
+def show(sample=10):
+    import tonic, tonic.transforms as transforms
+    from torchvision.transforms import v2
+
+    test_transform = transforms.Compose(
+            [
+                transforms.ToFrame(
+                    sensor_size = tonic.datasets.DVSGesture.sensor_size, #(self.width, self.height, self.depth),
+                    time_window=10000,
+                ),
+            ]
+        )
+    testset = tonic.datasets.DVSGesture(
+            save_to="data/", train=False
+        )
+    
+    events, label = testset[sample]
+    
+    print(f"IBM DVS Gesture classes: {tonic.datasets.DVSGesture.classes}")
+    print(f"Showing sample {sample} from the test set, that is a {tonic.datasets.DVSGesture.classes[label]} gesture.")
+    
+    frames = test_transform(events)
+    animation = tonic.utils.plot_animation(frames)
+    HTML(animation.to_jshtml())
+    
+    animation.save("demo.gif", fps=30)
         
 if __name__ == "__main__":
     cli()
